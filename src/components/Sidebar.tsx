@@ -34,10 +34,12 @@ import { BlendModeDropdown } from './BlendModeDropdown';
 import { AdvancedColorPicker } from './AdvancedColorPicker';
 import { LayerTreeItem } from './LayerTreeItem';
 import { LayerStylesModal } from './LayerStylesModal';
+import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '../store/index';
-import { generateKeyframes } from '../services/aiService';
-import { importAsset, exportCanvas } from '../services/fileService';
+import { generateKeyframes, isAIConfigured } from '../services/aiService';
+import { importImageFiles, pickFiles } from '../services/fileService';
 import { LayerFactory } from '../core/layers/LayerFactory';
+import { safeNumber } from '../core/layers/layerUtils';
 
 export const Sidebar: React.FC = () => {
   const {
@@ -47,11 +49,14 @@ export const Sidebar: React.FC = () => {
     selectedLayerIds,
     setSelectedLayerId,
     setSelectedLayerIds,
+    selectLayer,
     toggleLayerVisibility,
     addLayer,
     deleteLayer,
+    deleteSelectedLayers,
     groupLayers,
     setMask,
+    removeMask,
     moveLayer,
     addAdjustmentLayer,
     addClonerLayer,
@@ -61,9 +66,12 @@ export const Sidebar: React.FC = () => {
     applyKineticPreset,
     undo,
     redo,
+    history,
     historyIndex,
+    jumpToHistory,
     setLayers,
     updateLayer,
+    updateLayerCommitted,
     setAdjustments,
     setBlendMode,
     addKeyframe,
@@ -80,48 +88,114 @@ export const Sidebar: React.FC = () => {
     setBrushColor,
     soloLayerId,
     toggleSoloLayer,
-    updateLayerStyle
-  } = useStore();
+    updateLayerStyle,
+    duplicateLayer,
+    currentTime,
+    duration,
+    setStatusMessage
+  } = useStore(useShallow((s) => ({
+    layers: s.layers,
+    motionPaths: s.motionPaths,
+    selectedLayerId: s.selectedLayerId,
+    selectedLayerIds: s.selectedLayerIds,
+    setSelectedLayerId: s.setSelectedLayerId,
+    setSelectedLayerIds: s.setSelectedLayerIds,
+    selectLayer: s.selectLayer,
+    toggleLayerVisibility: s.toggleLayerVisibility,
+    addLayer: s.addLayer,
+    deleteLayer: s.deleteLayer,
+    deleteSelectedLayers: s.deleteSelectedLayers,
+    groupLayers: s.groupLayers,
+    setMask: s.setMask,
+    removeMask: s.removeMask,
+    moveLayer: s.moveLayer,
+    addAdjustmentLayer: s.addAdjustmentLayer,
+    addClonerLayer: s.addClonerLayer,
+    addShapeLayer: s.addShapeLayer,
+    addTextLayer: s.addTextLayer,
+    addVectorLayer: s.addVectorLayer,
+    applyKineticPreset: s.applyKineticPreset,
+    undo: s.undo,
+    redo: s.redo,
+    history: s.history,
+    historyIndex: s.historyIndex,
+    jumpToHistory: s.jumpToHistory,
+    setLayers: s.setLayers,
+    updateLayer: s.updateLayer,
+    updateLayerCommitted: s.updateLayerCommitted,
+    setAdjustments: s.setAdjustments,
+    setBlendMode: s.setBlendMode,
+    addKeyframe: s.addKeyframe,
+    addTextAnimatorLayer: s.addTextAnimatorLayer,
+    activeSidebarTab: s.activeSidebarTab,
+    setActiveSidebarTab: s.setActiveSidebarTab,
+    setIsExportModalOpen: s.setIsExportModalOpen,
+    expandedGroupIds: s.expandedGroupIds,
+    toggleGroupExpand: s.toggleGroupExpand,
+    moveLayerToGroup: s.moveLayerToGroup,
+    toggleGroupVisibility: s.toggleGroupVisibility,
+    toggleGroupLock: s.toggleGroupLock,
+    brushColor: s.brushColor,
+    setBrushColor: s.setBrushColor,
+    soloLayerId: s.soloLayerId,
+    toggleSoloLayer: s.toggleSoloLayer,
+    updateLayerStyle: s.updateLayerStyle,
+    duplicateLayer: s.duplicateLayer,
+    currentTime: s.currentTime,
+    duration: s.duration,
+    setStatusMessage: s.setStatusMessage
+  })));
 
   const activeTab = activeSidebarTab;
   const setActiveTab = setActiveSidebarTab;
   const [aiPrompt, setAiPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [layerSearchQuery, setLayerSearchQuery] = useState('');
-  const [stylesTargetLayer, setStylesTargetLayer] = useState<Layer | null>(null);
+  const [stylesTargetLayerId, setStylesTargetLayerId] = useState<string | null>(null);
+
+  const currentLayer = layers.find(l => l.id === selectedLayerId);
 
   const handleAiAnimate = async () => {
-    if (!selectedLayerId || !aiPrompt) return;
+    if (!selectedLayerId || !aiPrompt.trim() || !currentLayer) return;
+    if (!isAIConfigured()) {
+      setStatusMessage('AI is not configured — add VITE_GEMINI_API_KEY to .env.local and restart the dev server');
+      return;
+    }
     setIsGenerating(true);
     try {
-      const keyframes = await generateKeyframes(aiPrompt);
-      // Apply to 'x' property for demo
-      keyframes.forEach((kf: any) => {
-        addKeyframe(selectedLayerId, 'x', kf);
+      const tracks = await generateKeyframes(aiPrompt, { durationSec: Math.min(10, duration), startX: currentLayer.transform.x, startY: currentLayer.transform.y });
+      if (!tracks.length) {
+        setStatusMessage('AI returned no usable keyframes — try a more specific prompt');
+        return;
+      }
+      useStore.getState().startHistoryTransaction();
+      tracks.forEach(track => {
+        track.keyframes.forEach(kf => addKeyframe(selectedLayerId, track.property, { ...kf, time: kf.time + currentTime }));
       });
-    } catch (error) {
+      useStore.getState().endHistoryTransaction('AI Animate');
+      setStatusMessage(`AI added ${tracks.reduce((n, t) => n + t.keyframes.length, 0)} keyframes across ${tracks.map(t => t.property).join(', ')}`);
+    } catch (error: any) {
       console.error(error);
+      setStatusMessage(`AI animate failed: ${error?.message || error}`);
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const currentLayer = layers.find(l => l.id === selectedLayerId);
-
-  const handleImport = () => {
-    importAsset((newLayer) => {
-      addLayer(newLayer);
-      setSelectedLayerId(newLayer.id);
-    });
+  const handleImport = async () => {
+    const files = await pickFiles('image/*', true);
+    const imported = await importImageFiles(files);
+    imported.forEach((layer, i) => addLayer({ ...layer, transform: { ...layer.transform, x: i * 24, y: i * 24 } }, `Import ${layer.name}`));
   };
 
-  const handleExport = (format: 'png' | 'jpg' = 'png') => {
-    const canvas = document.querySelector('canvas');
-    exportCanvas(canvas, format);
-  };
+  /** Numeric field helper: keeps NaN out of the store while the user is typing. */
+  const num = (raw: string, fallback: number) => safeNumber(raw, fallback);
+
+  /** Live styles-modal target: always reads the latest layer data from the store. */
+  const stylesTarget = stylesTargetLayerId ? layers.find(l => l.id === stylesTargetLayerId) || null : null;
 
   return (
-    <div className="w-64 bg-[#2a2a2a] border-l border-[#1a1a1a] flex flex-col z-20">
+    <div className="w-80 bg-[#2a2a2a] border-l border-[#1a1a1a] flex flex-col z-20 shrink-0">
       {/* Panel Tabs */}
       <div className="flex border-b border-[#1a1a1a]">
         <button 
@@ -193,8 +267,8 @@ export const Sidebar: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between border-t border-[#2a2a2a] pt-1.5">
-                <div className="flex gap-1">
+              <div className="flex items-center justify-between border-t border-[#2a2a2a] pt-1.5 gap-1 flex-wrap">
+                <div className="flex gap-1 flex-wrap">
                   <button onClick={() => addShapeLayer('rectangle')} title="Add Rectangle" className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white"><Maximize size={14} /></button>
                   <button onClick={() => addShapeLayer('circle')} title="Add Circle" className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white"><Activity size={14} /></button>
                   <button onClick={addAdjustmentLayer} title="Add Adjustment Layer" className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white"><Sun size={14} /></button>
@@ -202,11 +276,15 @@ export const Sidebar: React.FC = () => {
                   <button onClick={setMask} title="Set as Mask" className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white"><Scissors size={14} /></button>
                   <button onClick={handleImport} title="Import Asset" className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white"><Upload size={14} /></button>
                 </div>
-                <div className="flex gap-1">
-                  <button onClick={() => setIsExportModalOpen(true)} title="Export Custom Segment / Frames" className="p-1 bg-blue-600/30 hover:bg-blue-600 text-blue-300 hover:text-white rounded border border-blue-500/50 transition-colors flex items-center gap-1 text-[10px] font-bold px-1.5"><Download size={13} /> Export Range</button>
-                  <button onClick={() => addLayer(LayerFactory.createRasterLayer('New Layer'))} className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white"><Plus size={14} /></button>
+                <div className="flex gap-1 flex-wrap">
+                  <button onClick={() => setIsExportModalOpen(true)} title="Export animation / frames (Ctrl+E)" className="p-1 bg-blue-600/30 hover:bg-blue-600 text-blue-300 hover:text-white rounded border border-blue-500/50 transition-colors flex items-center gap-1 text-[10px] font-bold px-1.5"><Download size={13} /> Export</button>
+                  <button onClick={() => addLayer(LayerFactory.createRasterLayer(`Layer ${layers.length + 1}`))} title="New Empty Raster Layer" className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white"><Plus size={14} /></button>
+                  <button onClick={() => addTextLayer(false, 400, 400)} title="Add Text Layer (T)" className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white"><TypeIcon size={14} /></button>
+                  <button onClick={() => addVectorLayer()} title="Add Vector Path (P)" className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white"><PenTool size={14} /></button>
+                  <button onClick={addClonerLayer} title="Add Cloner Layer" className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white"><Settings size={14} /></button>
                   <button onClick={() => addTextAnimatorLayer()} title="Add Text Animator" className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white"><Zap size={14} /></button>
-                  <button onClick={deleteLayer} className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white"><Trash2 size={14} /></button>
+                  <button onClick={() => duplicateLayer()} title="Duplicate Selected Layer (Ctrl+D)" disabled={!selectedLayerId} className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-white disabled:opacity-40"><LayersIcon size={14} /></button>
+                  <button onClick={deleteSelectedLayers} title="Delete Selected Layer(s) (Delete)" disabled={!selectedLayerId && selectedLayerIds.length === 0} className="p-1 hover:bg-[#3a3a3a] rounded text-gray-400 hover:text-red-400 disabled:opacity-40"><Trash2 size={14} /></button>
                 </div>
               </div>
 
@@ -231,7 +309,7 @@ export const Sidebar: React.FC = () => {
               </div>
             </div>
             
-            <div className="flex flex-col overflow-y-auto max-h-[calc(100vh-320px)]">
+            <div className="flex flex-col overflow-y-auto max-h-[calc(100vh-380px)]">
               {layers
                 .filter((l) => {
                   if (!layerSearchQuery.trim()) return !l.parentId;
@@ -249,18 +327,7 @@ export const Sidebar: React.FC = () => {
                     selectedLayerIds={selectedLayerIds}
                     expandedGroupIds={layerSearchQuery.trim() ? layers.map(l => l.id) : expandedGroupIds}
                     soloLayerId={soloLayerId}
-                    onSelect={(id, isMulti) => {
-                      if (isMulti) {
-                        if (selectedLayerIds.includes(id)) {
-                          setSelectedLayerIds(selectedLayerIds.filter((i) => i !== id));
-                        } else {
-                          setSelectedLayerIds([...selectedLayerIds, id]);
-                        }
-                      } else {
-                        setSelectedLayerId(id);
-                        setSelectedLayerIds([id]);
-                      }
-                    }}
+                    onSelect={(id, isMulti) => selectLayer(id, isMulti)}
                     onToggleVisibility={(id) => {
                       const l = layers.find((item) => item.id === id);
                       if (l?.type === 'group') {
@@ -281,16 +348,16 @@ export const Sidebar: React.FC = () => {
                     onToggleExpand={toggleGroupExpand}
                     onMoveLayer={moveLayer}
                     onMoveToGroup={moveLayerToGroup}
-                    onDeleteLayer={(id) => {
-                      if (selectedLayerId === id) setSelectedLayerId(null);
-                      deleteLayer(id);
-                    }}
-                    onRenameLayer={(id, newName) => updateLayer(id, { name: newName })}
+                    onDeleteLayer={(id) => deleteLayer(id)}
+                    onRenameLayer={(id, newName) => updateLayerCommitted(id, { name: newName }, 'Rename Layer')}
                     onUpdateColorTag={(id, colorTag) => updateLayer(id, { colorTag })}
-                    onOpenStyles={(l) => setStylesTargetLayer(l)}
+                    onOpenStyles={(l) => setStylesTargetLayerId(l.id)}
                     onAddMask={(id) => {
-                      setSelectedLayerId(id);
-                      setMask();
+                      const target = layers.find(l => l.id === id);
+                      if (target?.maskId) { removeMask(id); return; }
+                      selectLayer(id);
+                      // setMask reads selectedLayerId from the store, so call it after selection settles
+                      setTimeout(() => useStore.getState().setMask(), 0);
                     }}
                   />
                 ))}
@@ -298,8 +365,19 @@ export const Sidebar: React.FC = () => {
           </div>
         )}
 
-        {activeTab === 'properties' && selectedLayerId && (
+        {activeTab === 'properties' && !currentLayer && (
+          <div className="p-6 flex flex-col items-center justify-center text-center gap-3 text-gray-500 h-48">
+            <Sliders size={22} className="text-gray-600" />
+            <p className="text-[11px] leading-relaxed">Select a layer on the canvas or in the Layers tab to edit its properties.</p>
+          </div>
+        )}
+
+        {activeTab === 'properties' && currentLayer && selectedLayerId && (
           <div className="p-4 flex flex-col gap-6">
+            <div className="flex items-center justify-between -mb-2">
+              <span className="text-[11px] font-bold text-white truncate" title={currentLayer.name}>{currentLayer.name}</span>
+              <span className="text-[9px] uppercase tracking-wider text-gray-500 bg-[#1a1a1a] border border-[#333] rounded px-1.5 py-0.5">{currentLayer.type}</span>
+            </div>
             {/* Opacity & Blend Mode Section */}
             <div className="flex flex-col gap-3 pb-3 border-b border-[#27272a]">
               <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
@@ -329,7 +407,7 @@ export const Sidebar: React.FC = () => {
                 <div className="pt-2">
                   <button
                     onClick={() => {
-                      if (currentLayer) setStylesTargetLayer(currentLayer);
+                      if (currentLayer) setStylesTargetLayerId(currentLayer.id);
                     }}
                     className="w-full py-2 bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 hover:text-white border border-blue-500/40 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 shadow"
                   >
@@ -348,8 +426,8 @@ export const Sidebar: React.FC = () => {
                   <span className="text-[10px] text-gray-400">Position X</span>
                   <input 
                     type="number" 
-                    value={currentLayer.transform.x}
-                    onChange={(e) => updateLayer(selectedLayerId!, { transform: { ...currentLayer.transform, x: parseInt(e.target.value) } })}
+                    value={Math.round(currentLayer.transform.x * 10) / 10}
+                    onChange={(e) => updateLayer(selectedLayerId!, { transform: { ...currentLayer.transform, x: num(e.target.value, currentLayer.transform.x) } })}
                     className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
                   />
                 </div>
@@ -357,8 +435,8 @@ export const Sidebar: React.FC = () => {
                   <span className="text-[10px] text-gray-400">Position Y</span>
                   <input 
                     type="number" 
-                    value={currentLayer.transform.y}
-                    onChange={(e) => updateLayer(selectedLayerId!, { transform: { ...currentLayer.transform, y: parseInt(e.target.value) } })}
+                    value={Math.round(currentLayer.transform.y * 10) / 10}
+                    onChange={(e) => updateLayer(selectedLayerId!, { transform: { ...currentLayer.transform, y: num(e.target.value, currentLayer.transform.y) } })}
                     className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
                   />
                 </div>
@@ -367,7 +445,7 @@ export const Sidebar: React.FC = () => {
                   <input 
                     type="number" step="0.1"
                     value={currentLayer.transform.scaleX}
-                    onChange={(e) => updateLayer(selectedLayerId!, { transform: { ...currentLayer.transform, scaleX: parseFloat(e.target.value) } })}
+                    onChange={(e) => updateLayer(selectedLayerId!, { transform: { ...currentLayer.transform, scaleX: Math.max(0.01, num(e.target.value, currentLayer.transform.scaleX)) } })}
                     className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
                   />
                 </div>
@@ -376,7 +454,7 @@ export const Sidebar: React.FC = () => {
                   <input 
                     type="number" step="0.1"
                     value={currentLayer.transform.scaleY}
-                    onChange={(e) => updateLayer(selectedLayerId!, { transform: { ...currentLayer.transform, scaleY: parseFloat(e.target.value) } })}
+                    onChange={(e) => updateLayer(selectedLayerId!, { transform: { ...currentLayer.transform, scaleY: Math.max(0.01, num(e.target.value, currentLayer.transform.scaleY)) } })}
                     className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
                   />
                 </div>
@@ -385,7 +463,7 @@ export const Sidebar: React.FC = () => {
                   <input 
                     type="number" 
                     value={currentLayer.transform.rotation}
-                    onChange={(e) => updateLayer(selectedLayerId!, { transform: { ...currentLayer.transform, rotation: parseInt(e.target.value) } })}
+                    onChange={(e) => updateLayer(selectedLayerId!, { transform: { ...currentLayer.transform, rotation: num(e.target.value, currentLayer.transform.rotation) } })}
                     className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
                   />
                 </div>
@@ -404,6 +482,7 @@ export const Sidebar: React.FC = () => {
                   </div>
                   <input 
                     type="range" min="0" max="200" value={currentLayer?.adjustments.brightness} 
+                    onMouseUp={() => updateLayerCommitted(selectedLayerId!, {}, 'Brightness')}
                     onChange={(e) => setAdjustments({ ...currentLayer!.adjustments, brightness: parseInt(e.target.value) })}
                     className="w-full h-1 bg-[#1a1a1a] rounded-full appearance-none cursor-pointer accent-blue-500"
                   />
@@ -415,6 +494,7 @@ export const Sidebar: React.FC = () => {
                   </div>
                   <input 
                     type="range" min="0" max="200" value={currentLayer?.adjustments.contrast} 
+                    onMouseUp={() => updateLayerCommitted(selectedLayerId!, {}, 'Contrast')}
                     onChange={(e) => setAdjustments({ ...currentLayer!.adjustments, contrast: parseInt(e.target.value) })}
                     className="w-full h-1 bg-[#1a1a1a] rounded-full appearance-none cursor-pointer accent-blue-500"
                   />
@@ -434,6 +514,7 @@ export const Sidebar: React.FC = () => {
                   </div>
                   <input 
                     type="range" min="-180" max="180" value={currentLayer?.adjustments.hue} 
+                    onMouseUp={() => updateLayerCommitted(selectedLayerId!, {}, 'Hue')}
                     onChange={(e) => setAdjustments({ ...currentLayer!.adjustments, hue: parseInt(e.target.value) })}
                     className="w-full h-1 bg-gradient-to-r from-red-500 via-green-500 to-red-500 rounded-full appearance-none cursor-pointer"
                   />
@@ -445,6 +526,7 @@ export const Sidebar: React.FC = () => {
                   </div>
                   <input 
                     type="range" min="0" max="200" value={currentLayer?.adjustments.saturation} 
+                    onMouseUp={() => updateLayerCommitted(selectedLayerId!, {}, 'Saturation')}
                     onChange={(e) => setAdjustments({ ...currentLayer!.adjustments, saturation: parseInt(e.target.value) })}
                     className="w-full h-1 bg-[#1a1a1a] rounded-full appearance-none cursor-pointer accent-blue-500"
                   />
@@ -458,6 +540,44 @@ export const Sidebar: React.FC = () => {
                   <TypeIcon size={12} /> Text Settings
                 </h3>
                 <div className="space-y-4">
+                  {!currentLayer.textAnimatorSettings && (
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-gray-400">Text Content</span>
+                      <textarea
+                        value={currentLayer.content || ''}
+                        onChange={(e) => updateLayer(selectedLayerId!, { content: e.target.value })}
+                        onBlur={() => updateLayerCommitted(selectedLayerId!, {}, 'Edit Text')}
+                        placeholder="Type your text… (Enter for new line)"
+                        className="w-full bg-[#1a1a1a] border border-[#3a3a3a] focus:border-blue-500 rounded p-2 text-xs text-white resize-y min-h-[56px] outline-none"
+                      />
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-gray-400">Weight</span>
+                      <select
+                        value={currentLayer.fontSettings?.weight || 'bold'}
+                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), weight: e.target.value } })}
+                        className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
+                      >
+                        <option value="300">Light</option>
+                        <option value="normal">Regular</option>
+                        <option value="500">Medium</option>
+                        <option value="600">Semi-Bold</option>
+                        <option value="bold">Bold</option>
+                        <option value="900">Black</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-gray-400">Opacity</span>
+                      <input
+                        type="range" min="0" max="100"
+                        value={Math.round(currentLayer.opacity * 100)}
+                        onChange={(e) => updateLayer(selectedLayerId!, { opacity: num(e.target.value, 100) / 100 })}
+                        className="w-full h-1 mt-2 bg-[#1a1a1a] rounded-full appearance-none cursor-pointer accent-blue-500"
+                      />
+                    </div>
+                  </div>
                   <div className="space-y-1">
                     <span className="text-[10px] text-gray-400">Font Family</span>
                     <select 
@@ -470,6 +590,9 @@ export const Sidebar: React.FC = () => {
                       <option value="Montserrat">Montserrat</option>
                       <option value="Playfair Display">Playfair Display</option>
                       <option value="Space Grotesk">Space Grotesk</option>
+                      <option value="Outfit">Outfit</option>
+                      <option value="JetBrains Mono">JetBrains Mono</option>
+                      <option value="Bebas Neue">Bebas Neue</option>
                     </select>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -478,7 +601,7 @@ export const Sidebar: React.FC = () => {
                       <input 
                         type="number" 
                         value={currentLayer.fontSettings?.size || 48}
-                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), size: parseInt(e.target.value) } })}
+                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), size: Math.max(1, num(e.target.value, currentLayer.fontSettings?.size || 48)) } })}
                         className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
                       />
                     </div>
@@ -498,7 +621,7 @@ export const Sidebar: React.FC = () => {
                       <input 
                         type="number" 
                         value={currentLayer.fontSettings?.tracking || 0}
-                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), tracking: parseInt(e.target.value) } })}
+                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), tracking: num(e.target.value, 0) } })}
                         className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
                       />
                     </div>
@@ -507,7 +630,7 @@ export const Sidebar: React.FC = () => {
                       <input 
                         type="number" step="0.1"
                         value={currentLayer.fontSettings?.leading || 1.2}
-                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), leading: parseFloat(e.target.value) } })}
+                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), leading: Math.max(0.1, num(e.target.value, 1.2)) } })}
                         className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
                       />
                     </div>
@@ -556,7 +679,7 @@ export const Sidebar: React.FC = () => {
                         type="number" step="0.1"
                         value={currentLayer.textAnimatorSettings.speed}
                         onChange={(e) => updateLayer(selectedLayerId!, { 
-                          textAnimatorSettings: { ...currentLayer.textAnimatorSettings!, speed: parseFloat(e.target.value) } 
+                          textAnimatorSettings: { ...currentLayer.textAnimatorSettings!, speed: num(e.target.value, 1) } 
                         })}
                         className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
                       />
@@ -567,7 +690,7 @@ export const Sidebar: React.FC = () => {
                         type="number" step="0.1"
                         value={currentLayer.textAnimatorSettings.smoothness}
                         onChange={(e) => updateLayer(selectedLayerId!, { 
-                          textAnimatorSettings: { ...currentLayer.textAnimatorSettings!, smoothness: parseFloat(e.target.value) } 
+                          textAnimatorSettings: { ...currentLayer.textAnimatorSettings!, smoothness: num(e.target.value, 0.5) } 
                         })}
                         className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
                       />
@@ -616,7 +739,7 @@ export const Sidebar: React.FC = () => {
                             <input 
                               type="number" step="0.1" min="0" max="1"
                               value={styleData.opacity} 
-                              onChange={(e) => useStore.getState().updateLayerStyle(selectedLayerId!, style.id as any, { opacity: parseFloat(e.target.value) })}
+                              onChange={(e) => useStore.getState().updateLayerStyle(selectedLayerId!, style.id as any, { opacity: Math.max(0, Math.min(1, num(e.target.value, 0.5))) })}
                               className="w-full bg-[#222] border border-[#3a3a3a] rounded px-1 py-0.5 text-[10px] text-white"
                             />
                           </div>
@@ -625,7 +748,7 @@ export const Sidebar: React.FC = () => {
                             <input 
                               type="number"
                               value={styleData.distance} 
-                              onChange={(e) => useStore.getState().updateLayerStyle(selectedLayerId!, style.id as any, { distance: parseInt(e.target.value) })}
+                              onChange={(e) => useStore.getState().updateLayerStyle(selectedLayerId!, style.id as any, { distance: num(e.target.value, 5) })}
                               className="w-full bg-[#222] border border-[#3a3a3a] rounded px-1 py-0.5 text-[10px] text-white"
                             />
                           </div>
@@ -634,7 +757,7 @@ export const Sidebar: React.FC = () => {
                             <input 
                               type="number"
                               value={styleData.size} 
-                              onChange={(e) => useStore.getState().updateLayerStyle(selectedLayerId!, style.id as any, { size: parseInt(e.target.value) })}
+                              onChange={(e) => useStore.getState().updateLayerStyle(selectedLayerId!, style.id as any, { size: Math.max(0, num(e.target.value, 5)) })}
                               className="w-full bg-[#222] border border-[#3a3a3a] rounded px-1 py-0.5 text-[10px] text-white"
                             />
                           </div>
@@ -1022,7 +1145,7 @@ export const Sidebar: React.FC = () => {
                       <input 
                         type="number" 
                         value={currentLayer.fontSettings?.size || 48}
-                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), size: parseInt(e.target.value) } })}
+                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), size: Math.max(1, num(e.target.value, currentLayer.fontSettings?.size || 48)) } })}
                         className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
                       />
                     </div>
@@ -1031,7 +1154,7 @@ export const Sidebar: React.FC = () => {
                       <input 
                         type="number" 
                         value={currentLayer.fontSettings?.depth || 10}
-                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), depth: parseInt(e.target.value) } })}
+                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), depth: Math.max(1, Math.min(60, num(e.target.value, 10))) } })}
                         className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1 text-xs text-white"
                       />
                     </div>
@@ -1084,7 +1207,7 @@ export const Sidebar: React.FC = () => {
                       </div>
                       <input 
                         type="range" min="-10" max="50" value={currentLayer.fontSettings?.tracking || 0}
-                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), tracking: parseInt(e.target.value) } })}
+                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), tracking: num(e.target.value, 0) } })}
                         className="w-full h-1 bg-[#1a1a1a] rounded-full appearance-none cursor-pointer accent-blue-500"
                       />
                     </div>
@@ -1095,7 +1218,7 @@ export const Sidebar: React.FC = () => {
                       </div>
                       <input 
                         type="range" min="0.5" max="3" step="0.1" value={currentLayer.fontSettings?.leading || 1.2}
-                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), leading: parseFloat(e.target.value) } })}
+                        onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), leading: Math.max(0.1, num(e.target.value, 1.2)) } })}
                         className="w-full h-1 bg-[#1a1a1a] rounded-full appearance-none cursor-pointer accent-blue-500"
                       />
                     </div>
@@ -1105,7 +1228,7 @@ export const Sidebar: React.FC = () => {
                     <span className="text-[10px] text-gray-400">Bevel</span>
                     <input 
                       type="range" min="0" max="20" value={currentLayer.fontSettings?.bevel || 0}
-                      onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), bevel: parseInt(e.target.value) } })}
+                      onChange={(e) => updateLayer(selectedLayerId!, { fontSettings: { ...(currentLayer?.fontSettings || { size: 48 }), bevel: num(e.target.value, 0) } })}
                       className="w-full h-1 bg-[#1a1a1a] rounded-full appearance-none cursor-pointer accent-blue-500"
                     />
                   </div>
@@ -1113,9 +1236,11 @@ export const Sidebar: React.FC = () => {
                   <div className="space-y-2">
                     <span className="text-[10px] text-gray-400">Animation Presets</span>
                     <div className="grid grid-cols-2 gap-1">
-                      {['Fluid Morph', 'Scrolling', 'Glitch', 'Typewriter'].map(preset => (
+                      {['Fluid Morph', 'Scrolling', 'Glitch', 'Typewriter', 'Dynamic Layout'].map(preset => (
                         <button 
                           key={preset}
+                          onClick={() => { applyKineticPreset(preset); setStatusMessage(`Applied "${preset}" preset at ${currentTime.toFixed(2)}s`); }}
+                          title={`Add "${preset}" keyframes starting at the playhead`}
                           className="py-1.5 text-[9px] bg-[#1a1a1a] border border-[#3a3a3a] rounded text-gray-400 hover:text-white hover:border-blue-500 transition-all"
                         >
                           {preset}
@@ -1135,11 +1260,11 @@ export const Sidebar: React.FC = () => {
                 <select 
                   className="w-full bg-[#1a1a1a] border border-[#3a3a3a] rounded px-2 py-1.5 text-xs text-white"
                   value={currentLayer?.motionPathId || ''}
-                  onChange={(e) => updateLayer(selectedLayerId!, { motionPathId: e.target.value })}
+                  onChange={(e) => updateLayerCommitted(selectedLayerId!, { motionPathId: e.target.value || undefined, motionPathProgress: currentLayer?.motionPathProgress ?? 0 }, 'Assign Motion Path')}
                 >
                   <option value="">No Path</option>
                   {motionPaths.map(path => (
-                    <option key={path.id} value={path.id}>Path {path.id.slice(-4)}</option>
+                    <option key={path.id} value={path.id}>Path {path.id.slice(-5)} ({path.points.length} pts)</option>
                   ))}
                 </select>
                 {currentLayer?.motionPathId && (
@@ -1150,11 +1275,23 @@ export const Sidebar: React.FC = () => {
                     </div>
                     <input 
                       type="range" min="0" max="1" step="0.01" value={currentLayer.motionPathProgress || 0}
-                      onChange={(e) => updateLayer(selectedLayerId!, { motionPathProgress: parseFloat(e.target.value) })}
+                      onMouseUp={() => updateLayerCommitted(selectedLayerId!, {}, 'Path Progress')}
+                      onChange={(e) => updateLayer(selectedLayerId!, { motionPathProgress: num(e.target.value, 0) })}
                       className="w-full h-1 bg-[#1a1a1a] rounded-full appearance-none cursor-pointer accent-blue-500"
                     />
+                    <button
+                      onClick={() => {
+                        const p = currentLayer.motionPathProgress || 0;
+                        addKeyframe(selectedLayerId!, 'motionPathProgress', { time: currentTime, value: p, easing: 'ease-in-out' });
+                        setStatusMessage(`Keyframed path progress ${Math.round(p * 100)}% at ${currentTime.toFixed(2)}s`);
+                      }}
+                      className="w-full py-1 mt-1 bg-[#1a1a1a] hover:bg-[#2a2a2a] border border-[#3a3a3a] rounded text-[10px] text-gray-300"
+                    >
+                      ◆ Keyframe progress at {currentTime.toFixed(2)}s
+                    </button>
                   </div>
                 )}
+                <p className="text-[9px] text-gray-500">Draw a new path with the Motion Path tool (Shift+P) while this layer is selected.</p>
               </div>
             </div>
 
@@ -1266,6 +1403,7 @@ export const Sidebar: React.FC = () => {
               <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
                 <Activity size={12} /> Curves
               </h3>
+              {currentLayer?.type !== 'raster' && <p className="text-[9px] text-gray-500 -mt-1">Curves and Chroma Key process pixels, so they apply to image (raster) layers.</p>}
               <CurvesEditor 
                 adjustment={currentLayer?.adjustments.curves || {
                   rgb: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
@@ -1371,8 +1509,10 @@ export const Sidebar: React.FC = () => {
                     {['Fluid Morph', 'Scrolling', 'Glitch', 'Typewriter', 'Dynamic Layout'].map(preset => (
                       <button 
                         key={preset}
-                        onClick={() => applyKineticPreset(preset)}
-                        className="py-2 bg-[#1a1a1a] text-[9px] rounded border border-[#3a3a3a] hover:border-blue-500 transition-all"
+                        disabled={!currentLayer || (currentLayer.type !== 'text' && currentLayer.type !== '3d-text')}
+                        title={!currentLayer || (currentLayer.type !== 'text' && currentLayer.type !== '3d-text') ? 'Select a text or 3D text layer first' : `Apply "${preset}" at the playhead`}
+                        onClick={() => { applyKineticPreset(preset); setStatusMessage(`Applied "${preset}" preset at ${currentTime.toFixed(2)}s`); }}
+                        className="py-2 bg-[#1a1a1a] text-[9px] rounded border border-[#3a3a3a] hover:border-blue-500 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {preset}
                       </button>
@@ -1401,18 +1541,55 @@ export const Sidebar: React.FC = () => {
                 <Settings size={12} /> Procedural Tools
               </h3>
               <div className="space-y-2">
+                <button
+                  onClick={addClonerLayer}
+                  className="w-full py-2 bg-[#333] hover:bg-[#444] text-[10px] rounded border border-[#444] flex items-center justify-center gap-2"
+                >
+                  <Plus size={12} /> Add Cloner System Layer
+                </button>
+                <button
+                  onClick={() => useStore.getState().addKeyframe()}
+                  disabled={!currentLayer}
+                  className="w-full py-2 bg-[#333] hover:bg-[#444] text-[10px] rounded border border-[#444] flex items-center justify-center gap-2 disabled:opacity-40"
+                >
+                  <Activity size={12} /> Keyframe Transform at {currentTime.toFixed(2)}s (Ctrl+K)
+                </button>
                 <div className="flex items-center justify-between p-2 bg-[#1a1a1a] rounded border border-[#3a3a3a]">
-                  <span className="text-[10px] text-gray-300">Cloner System</span>
-                  <div className="w-8 h-4 bg-blue-600 rounded-full relative">
-                    <div className="absolute right-1 top-1 w-2 h-2 bg-white rounded-full"></div>
-                  </div>
+                  <span className="text-[10px] text-gray-300">Wiggle / Noise on selected layer</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      disabled={!currentLayer}
+                      checked={currentLayer?.proceduralSettings?.type === 'noise'}
+                      onChange={(e) => {
+                        if (!currentLayer) return;
+                        updateLayerCommitted(currentLayer.id, {
+                          proceduralSettings: e.target.checked
+                            ? { type: 'noise', noise: { enabled: true, frequency: 1, amplitude: 20, speed: 2 } }
+                            : { type: null }
+                        }, e.target.checked ? 'Enable Wiggle' : 'Disable Wiggle');
+                      }}
+                    />
+                    <div className="w-8 h-4 bg-[#333] rounded-full peer peer-checked:bg-blue-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-full"></div>
+                  </label>
                 </div>
-                <div className="flex items-center justify-between p-2 bg-[#1a1a1a] rounded border border-[#3a3a3a]">
-                  <span className="text-[10px] text-gray-300">Physics Engine</span>
-                  <div className="w-8 h-4 bg-[#333] rounded-full relative">
-                    <div className="absolute left-1 top-1 w-2 h-2 bg-gray-500 rounded-full"></div>
+                {currentLayer?.proceduralSettings?.type === 'noise' && currentLayer.proceduralSettings.noise && (
+                  <div className="grid grid-cols-2 gap-2 p-2 bg-[#1a1a1a] rounded border border-[#3a3a3a]">
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-gray-400">Amplitude ({currentLayer.proceduralSettings.noise.amplitude}px)</span>
+                      <input type="range" min="0" max="200" value={currentLayer.proceduralSettings.noise.amplitude}
+                        onChange={(e) => updateLayer(currentLayer.id, { proceduralSettings: { ...currentLayer.proceduralSettings!, noise: { ...currentLayer.proceduralSettings!.noise!, amplitude: num(e.target.value, 20) } } })}
+                        className="w-full h-1 bg-[#222] rounded appearance-none accent-blue-500 cursor-pointer" />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-gray-400">Speed ({currentLayer.proceduralSettings.noise.speed})</span>
+                      <input type="range" min="0.1" max="10" step="0.1" value={currentLayer.proceduralSettings.noise.speed}
+                        onChange={(e) => updateLayer(currentLayer.id, { proceduralSettings: { ...currentLayer.proceduralSettings!, noise: { ...currentLayer.proceduralSettings!.noise!, speed: num(e.target.value, 2) } } })}
+                        className="w-full h-1 bg-[#222] rounded appearance-none accent-blue-500 cursor-pointer" />
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
@@ -1421,32 +1598,39 @@ export const Sidebar: React.FC = () => {
         {activeTab === 'history' && (
           <div className="flex flex-col">
             <div className="p-2 flex gap-2 border-b border-[#1a1a1a] bg-[#222]">
-              <button 
+              <button
                 onClick={undo}
                 className="flex-1 py-1 bg-[#333] hover:bg-[#444] text-[10px] rounded border border-[#444] disabled:opacity-50"
                 disabled={historyIndex <= 0}
+                title="Undo (Ctrl+Z)"
               >
                 Undo
               </button>
-              <button 
+              <button
                 onClick={redo}
                 className="flex-1 py-1 bg-[#333] hover:bg-[#444] text-[10px] rounded border border-[#444] disabled:opacity-50"
-                disabled={historyIndex >= 50 || historyIndex === -1} // Simplified
+                disabled={historyIndex >= history.length - 1}
+                title="Redo (Ctrl+Shift+Z)"
               >
                 Redo
               </button>
             </div>
             <div className="flex flex-col">
-              {/* In a real app, we'd map over a list of actions. For now, we'll show a placeholder list based on historyIndex */}
-              {Array.from({ length: historyIndex + 1 }).map((_, i) => (
-                <div key={i} className={`p-2 border-b border-[#1a1a1a] flex items-center justify-between group hover:bg-[#333] cursor-default ${i === historyIndex ? 'bg-blue-600/10' : ''}`}>
-                  <div className="flex items-center gap-2">
-                    <History size={12} className={i === historyIndex ? 'text-blue-400' : 'text-gray-500'} />
-                    <span className={`text-[11px] ${i === historyIndex ? 'text-white font-bold' : 'text-gray-300'}`}>
-                      State Change {i + 1}
+              {history.map((entry, i) => (
+                <button
+                  key={i}
+                  onClick={() => jumpToHistory(i)}
+                  className={`p-2 border-b border-[#1a1a1a] flex items-center justify-between text-left hover:bg-[#333] transition-colors ${i === historyIndex ? 'bg-blue-600/10' : ''} ${i > historyIndex ? 'opacity-50' : ''}`}
+                  title={i === historyIndex ? 'Current state' : `Jump to "${entry.label}"`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <History size={12} className={i === historyIndex ? 'text-blue-400 shrink-0' : 'text-gray-500 shrink-0'} />
+                    <span className={`text-[11px] truncate ${i === historyIndex ? 'text-white font-bold' : 'text-gray-300'}`}>
+                      {entry.label}
                     </span>
                   </div>
-                </div>
+                  <span className="text-[9px] font-mono text-gray-600 shrink-0">{entry.layers.length}L</span>
+                </button>
               ))}
             </div>
           </div>
@@ -1461,7 +1645,7 @@ export const Sidebar: React.FC = () => {
             setBrushColor(newColor);
             if (selectedLayerId) {
               const currentLayer = layers.find(l => l.id === selectedLayerId);
-              if (currentLayer?.type === 'text') {
+              if (currentLayer?.type === 'text' || currentLayer?.type === '3d-text') {
                 updateLayer(selectedLayerId, {
                   fontSettings: { ...(currentLayer.fontSettings || { size: 48 }), color: newColor }
                 });
@@ -1480,17 +1664,12 @@ export const Sidebar: React.FC = () => {
         />
       </div>
 
-      {stylesTargetLayer && (
+      {stylesTarget && (
         <LayerStylesModal
-          layer={stylesTargetLayer}
-          isOpen={!!stylesTargetLayer}
-          onClose={() => setStylesTargetLayer(null)}
-          onUpdateStyle={(styleType, updates) => {
-            updateLayerStyle(stylesTargetLayer.id, styleType, updates);
-            // Sync current state
-            const updated = layers.find(l => l.id === stylesTargetLayer.id);
-            if (updated) setStylesTargetLayer({ ...updated });
-          }}
+          layer={stylesTarget}
+          isOpen={!!stylesTarget}
+          onClose={() => { setStylesTargetLayerId(null); updateLayerCommitted(stylesTarget.id, {}, 'Layer Styles'); }}
+          onUpdateStyle={(styleType, updates) => updateLayerStyle(stylesTarget.id, styleType, updates)}
         />
       )}
     </div>

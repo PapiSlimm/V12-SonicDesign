@@ -1,4 +1,5 @@
-import { Layer, Transform, Adjustments, ClonerSettings, ShapeSettings } from '../types';
+import { Layer, Transform, Adjustments } from '../types';
+import { uid } from './layerUtils';
 
 export class LayerFactory {
   static createDefaultAdjustments(): Adjustments {
@@ -31,7 +32,7 @@ export class LayerFactory {
 
   static createRasterLayer(name: string, bitmap: ImageBitmap | null = null): Layer {
     return {
-      id: `layer-raster-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: uid('layer-raster'),
       name,
       visible: true,
       locked: false,
@@ -46,7 +47,7 @@ export class LayerFactory {
 
   static createAdjustmentLayer(name: string): Layer {
     return {
-      id: `layer-adj-${Date.now()}`,
+      id: uid('layer-adj'),
       name,
       visible: true,
       locked: false,
@@ -61,7 +62,7 @@ export class LayerFactory {
 
   static createTextLayer(name: string, is3D = false, x = 200, y = 200): Layer {
     return {
-      id: `layer-text-${Date.now()}`,
+      id: uid('layer-text'),
       name,
       visible: true,
       locked: false,
@@ -71,13 +72,15 @@ export class LayerFactory {
       bitmap: null,
       type: is3D ? '3d-text' : 'text',
       transform: this.createDefaultTransform(x, y),
-      content: 'V12SonicDesign',
+      content: is3D ? 'V12 3D' : 'V12SonicDesign',
       fontSettings: {
         family: 'Inter',
-        size: 48,
+        size: is3D ? 96 : 48,
         weight: 'bold',
-        color: '#ffffff',
-        depth: is3D ? 20 : 0,
+        color: is3D ? '#3b82f6' : '#ffffff',
+        tracking: 0,
+        leading: 1.2,
+        depth: is3D ? 12 : 0,
         bevel: is3D ? 2 : 0
       }
     };
@@ -85,7 +88,7 @@ export class LayerFactory {
 
   static createShapeLayer(name: string, type: 'rectangle' | 'circle' | 'polygon'): Layer {
     return {
-      id: `layer-shape-${Date.now()}`,
+      id: uid('layer-shape'),
       name,
       visible: true,
       locked: false,
@@ -106,7 +109,7 @@ export class LayerFactory {
 
   static createGroupLayer(name: string, children: string[] = []): Layer {
     return {
-      id: `layer-group-${Date.now()}`,
+      id: uid('layer-group'),
       name,
       visible: true,
       locked: false,

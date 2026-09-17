@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Layer } from '../core/types';
 import { LayerThumbnail } from './LayerThumbnail';
 import { 
@@ -84,6 +84,23 @@ export const LayerTreeItem: React.FC<LayerTreeItemProps> = ({
   const [nameInput, setNameInput] = useState(layer.name);
   const [showGroupMenu, setShowGroupMenu] = useState(false);
   const [showTagMenu, setShowTagMenu] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  // Close popover menus when clicking anywhere else
+  useEffect(() => {
+    if (!showTagMenu && !showGroupMenu) return;
+    const onDown = (e: MouseEvent) => {
+      if (rowRef.current && !rowRef.current.contains(e.target as Node)) {
+        setShowTagMenu(false);
+        setShowGroupMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [showTagMenu, showGroupMenu]);
+
+  // Keep the rename buffer in sync if the layer is renamed elsewhere
+  useEffect(() => { if (!isEditingName) setNameInput(layer.name); }, [layer.name, isEditingName]);
 
   const isSelected = selectedLayerIds.includes(layer.id);
   const isSolo = soloLayerId === layer.id;
@@ -104,6 +121,7 @@ export const LayerTreeItem: React.FC<LayerTreeItemProps> = ({
     <div className="flex flex-col">
       {/* Row Item */}
       <div
+        ref={rowRef}
         onClick={(e) => {
           e.stopPropagation();
           onSelect(layer.id, e.ctrlKey || e.metaKey);
@@ -119,7 +137,7 @@ export const LayerTreeItem: React.FC<LayerTreeItemProps> = ({
           isSelected
             ? 'bg-blue-600/25 border-l-2 border-l-blue-500 text-white font-medium'
             : 'hover:bg-[#27272a]/60 text-gray-300'
-        }`}
+        } ${!layer.visible ? 'opacity-50' : ''}`}
       >
         {/* Color Tag Bar on Left Edge */}
         {layer.colorTag && (
@@ -262,8 +280,8 @@ export const LayerTreeItem: React.FC<LayerTreeItemProps> = ({
               e.stopPropagation();
               onAddMask(layer.id);
             }}
-            className="text-gray-500 hover:text-amber-400 p-0.5"
-            title="Create Non-Destructive Mask for Layer"
+            className={`p-0.5 ${layer.maskId ? 'text-amber-400' : 'text-gray-500 hover:text-amber-400'}`}
+            title={layer.maskId ? 'Remove mask from this layer' : 'Use this layer as a mask for the layer above it'}
           >
             <Scissors size={11} />
           </button>
@@ -417,27 +435,17 @@ export const LayerTreeItem: React.FC<LayerTreeItemProps> = ({
         </div>
 
         {/* Lock / Unlock Toggle */}
-        {layer.locked ? (
-          <Lock
-            size={12}
-            className="text-blue-400 cursor-pointer flex-shrink-0"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleLock(layer.id, true);
-            }}
-            title="Unlock Layer"
-          />
-        ) : (
-          <Unlock
-            size={12}
-            className="text-gray-500 hover:text-white cursor-pointer flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleLock(layer.id, false);
-            }}
-            title="Lock Layer"
-          />
-        )}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleLock(layer.id, layer.locked);
+          }}
+          className={`flex-shrink-0 p-0.5 rounded ${layer.locked ? 'text-blue-400' : 'text-gray-500 hover:text-white opacity-0 group-hover:opacity-100'} transition-opacity`}
+          title={layer.locked ? 'Unlock Layer' : 'Lock Layer (prevents moving/painting)'}
+        >
+          {layer.locked ? <Lock size={12} /> : <Unlock size={12} />}
+        </button>
       </div>
 
       {/* Child layers nested under Group */}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Search, X, Command, Keyboard, Sparkles, Sliders, Play, Move, PenTool, Layers } from 'lucide-react';
 import { useStore } from '../store';
 
@@ -12,69 +12,67 @@ interface ShortcutItem {
 
 const SHORTCUTS: ShortcutItem[] = [
   // Tools
-  { id: 'tool-move', label: 'Move / Selection Tool', description: 'Select and transform layers on canvas', category: 'tools', keys: ['V'] },
-  { id: 'tool-pen', label: 'Vector Pen Tool', description: 'Create and edit Bezier path curves', category: 'tools', keys: ['P'] },
-  { id: 'tool-brush', label: 'Paint Brush Tool', description: 'Draw freehand raster strokes', category: 'tools', keys: ['B'] },
-  { id: 'tool-eraser', label: 'Eraser Tool', description: 'Erase raster pixels on active layer', category: 'tools', keys: ['E'] },
+  { id: 'tool-move', label: 'Move / Selection Tool', description: 'Click layers on the canvas to select; drag to move (Shift = constrain axis, Alt = ignore snapping)', category: 'tools', keys: ['V'] },
+  { id: 'tool-pen', label: 'Vector Pen Tool', description: 'Click to add anchors; click the first anchor to close; Alt+click an anchor for curve handles; double-click removes', category: 'tools', keys: ['P'] },
+  { id: 'tool-brush', label: 'Paint Brush Tool', description: 'Paint on the selected image layer using the active color (creates a paint layer if needed)', category: 'tools', keys: ['B'] },
+  { id: 'tool-eraser', label: 'Eraser Tool', description: 'Erase pixels on the selected image layer', category: 'tools', keys: ['E'] },
+  { id: 'tool-marquee', label: 'Rectangular Marquee', description: 'Drag a rectangular pixel selection (constrains brush & gradient fills)', category: 'tools', keys: ['M'] },
+  { id: 'tool-lasso', label: 'Lasso Selection', description: 'Drag a freehand pixel selection', category: 'tools', keys: ['L'] },
   { id: 'tool-hand', label: 'Hand / Pan Tool', description: 'Pan around the canvas viewport', category: 'tools', keys: ['H'] },
-  { id: 'tool-gradient', label: 'Gradient Tool', description: 'Draw linear, radial, or conic gradients', category: 'tools', keys: ['G'] },
-  { id: 'tool-text', label: 'Text Tool', description: 'Create text or 3D text layers', category: 'tools', keys: ['T'] },
-  { id: 'tool-eyedropper', label: 'Eyedropper Tool', description: 'Sample color from any canvas pixel', category: 'tools', keys: ['I'] },
-  { id: 'tool-zoom', label: 'Zoom Tool', description: 'Zoom in or out of the canvas', category: 'tools', keys: ['Z'] },
+  { id: 'tool-gradient', label: 'Gradient Tool', description: 'Drag to fill the selected image layer with a linear, radial, or conic gradient', category: 'tools', keys: ['G'] },
+  { id: 'tool-text', label: 'Text Tool', description: 'Click on the canvas to place a new text layer', category: 'tools', keys: ['T'] },
+  { id: 'tool-text-animator', label: 'Text Animator Tool', description: 'Click to place an animated (wave/bounce/reveal/glitch) text layer', category: 'tools', keys: ['Shift', 'T'] },
+  { id: 'tool-motion-path', label: 'Motion Path Tool', description: 'Drag to draw a motion path and assign it to the selected layer', category: 'tools', keys: ['Shift', 'P'] },
+  { id: 'tool-eyedropper', label: 'Eyedropper Tool', description: 'Sample a color into the active swatch (Alt+click applies it to the selected layer)', category: 'tools', keys: ['I'] },
+  { id: 'tool-zoom', label: 'Zoom Tool', description: 'Click to zoom in, Alt+click to zoom out', category: 'tools', keys: ['Z'] },
+  { id: 'tool-crop', label: 'Crop Tool', description: 'Drag a rectangle to crop the selected image layer', category: 'tools', keys: ['C'] },
 
-  // Canvas & Vector Pen
-  { id: 'vector-add-point', label: 'Add Bezier Anchor', description: 'Click canvas with Pen tool to place point', category: 'canvas', keys: ['Click'] },
-  { id: 'vector-drag-handle', label: 'Smooth Curve Handles', description: 'Click & drag with Pen tool for smooth tangent handles', category: 'canvas', keys: ['Click & Drag'] },
-  { id: 'vector-close-path', label: 'Close Vector Path', description: 'Click first anchor point or press Enter to close path', category: 'canvas', keys: ['Enter'] },
-  { id: 'canvas-snap-angle', label: 'Constrain Angle / Ratio', description: 'Hold Shift while rotating or scaling to snap by 15° or maintain 1:1 ratio', category: 'canvas', keys: ['Shift', 'Drag'] },
-  { id: 'canvas-pan-space', label: 'Quick Pan Canvas', description: 'Hold Space and drag mouse to pan canvas', category: 'canvas', keys: ['Space', 'Drag'] },
-  { id: 'canvas-zoom-wheel', label: 'Zoom Viewport', description: 'Pinch or Ctrl/Cmd + Mouse Wheel to zoom centered on cursor', category: 'canvas', keys: ['⌘ / Ctrl', 'Wheel'] },
+  // Canvas
+  { id: 'canvas-select', label: 'Select Layer on Canvas', description: 'Click a layer with the Move tool; Shift+click adds to the selection; double-click opens Properties', category: 'canvas', keys: ['Click'] },
+  { id: 'canvas-nudge', label: 'Nudge Layer', description: 'Move the selected layer(s) by 1px (Shift = 10px)', category: 'canvas', keys: ['↑ ↓ ← →'] },
+  { id: 'canvas-snap-angle', label: 'Constrain Angle / Ratio', description: 'Hold Shift while rotating (15° steps) or scaling (keep aspect ratio)', category: 'canvas', keys: ['Shift', 'Drag'] },
+  { id: 'canvas-pan-space', label: 'Quick Pan Canvas', description: 'Hold Space and drag to pan (tap Space to play/pause)', category: 'canvas', keys: ['Space', 'Drag'] },
+  { id: 'canvas-zoom-wheel', label: 'Zoom Viewport', description: 'Ctrl/Cmd + mouse wheel zooms around the cursor; plain wheel pans', category: 'canvas', keys: ['⌘ / Ctrl', 'Wheel'] },
+  { id: 'canvas-zoom-keys', label: 'Zoom In / Out / Reset', description: 'Step the zoom level, or reset to 100%', category: 'canvas', keys: ['⌘ / Ctrl', '+ / − / 0'] },
+  { id: 'canvas-fit', label: 'Fit Document to Screen', description: 'Zoom so the whole 1920×1080 document is visible', category: 'canvas', keys: ['Shift', '0'] },
   { id: 'canvas-smart-guides', label: 'Toggle Smart Guides', description: 'Toggle alignment guide lines and snapping', category: 'canvas', keys: ['⌘ / Ctrl', 'Shift', 'G'] },
+  { id: 'canvas-drop', label: 'Import by Drag & Drop', description: 'Drop image files onto the canvas to import them as layers', category: 'canvas', keys: ['Drop'] },
 
-  // Playback & Timeline
-  { id: 'play-toggle', label: 'Play / Pause Animation', description: 'Toggle timeline animation playback', category: 'timeline', keys: ['Space'] },
-  { id: 'frame-next', label: 'Step Forward 1 Frame', description: 'Advance timeline by 1 frame', category: 'timeline', keys: ['.'] },
-  { id: 'frame-prev', label: 'Step Backward 1 Frame', description: 'Move timeline back by 1 frame', category: 'timeline', keys: [','] },
+  // Timeline
+  { id: 'play-toggle', label: 'Play / Pause Animation', description: 'Tap Space to toggle timeline playback', category: 'timeline', keys: ['Space'] },
+  { id: 'frame-next', label: 'Step Forward 1 Frame', description: 'Advance the playhead by one frame', category: 'timeline', keys: ['.'] },
+  { id: 'frame-prev', label: 'Step Backward 1 Frame', description: 'Move the playhead back one frame', category: 'timeline', keys: [','] },
   { id: 'jump-start', label: 'Jump to Timeline Start', description: 'Move playhead to 0.0 seconds', category: 'timeline', keys: ['Home'] },
-  { id: 'jump-end', label: 'Jump to Timeline End', description: 'Move playhead to end of animation', category: 'timeline', keys: ['End'] },
+  { id: 'jump-end', label: 'Jump to Timeline End', description: 'Move playhead to the end of the timeline', category: 'timeline', keys: ['End'] },
+  { id: 'add-keyframe', label: 'Add Keyframe', description: 'Keyframe the selected layer\'s transform and opacity at the playhead', category: 'timeline', keys: ['⌘ / Ctrl', 'K'] },
+  { id: 'keyframe-drag', label: 'Move Keyframe', description: 'Drag a keyframe diamond in the timeline (Alt = ignore snapping)', category: 'timeline', keys: ['Drag'] },
+  { id: 'keyframe-easing', label: 'Edit Keyframe Easing', description: 'Double-click a keyframe to open the Easing Editor', category: 'timeline', keys: ['Double-click'] },
+  { id: 'keyframe-delete', label: 'Delete Keyframe', description: 'Right-click a keyframe in the timeline', category: 'timeline', keys: ['Right-click'] },
 
-  // Layers & Editing
-  { id: 'edit-undo', label: 'Undo Action', description: 'Revert last editing operation', category: 'layers', keys: ['⌘ / Ctrl', 'Z'] },
-  { id: 'edit-redo', label: 'Redo Action', description: 'Reapply undone operation', category: 'layers', keys: ['⌘ / Ctrl', 'Shift', 'Z'] },
-  { id: 'layer-delete', label: 'Delete Selected Layer', description: 'Remove current layer from project', category: 'layers', keys: ['Delete'] },
-  { id: 'layer-group', label: 'Group Layers', description: 'Group selected layers into container', category: 'layers', keys: ['⌘ / Ctrl', 'G'] },
-  { id: 'layer-duplicate', label: 'Duplicate Layer', description: 'Clone active layer with transforms', category: 'layers', keys: ['⌘ / Ctrl', 'D'] },
-  { id: 'layer-deselect', label: 'Deselect All', description: 'Clear active layer or selection marquee', category: 'layers', keys: ['Esc'] },
+  // Layers
+  { id: 'edit-undo', label: 'Undo', description: 'Revert the last editing operation', category: 'layers', keys: ['⌘ / Ctrl', 'Z'] },
+  { id: 'edit-redo', label: 'Redo', description: 'Reapply an undone operation', category: 'layers', keys: ['⌘ / Ctrl', 'Shift', 'Z'] },
+  { id: 'layer-delete', label: 'Delete Selected Layer(s)', description: 'Remove the selected layers from the project', category: 'layers', keys: ['Delete'] },
+  { id: 'layer-group', label: 'Group Layers', description: 'Group selected layers into a folder', category: 'layers', keys: ['⌘ / Ctrl', 'G'] },
+  { id: 'layer-duplicate', label: 'Duplicate Layer', description: 'Clone the active layer including animation', category: 'layers', keys: ['⌘ / Ctrl', 'D'] },
+  { id: 'layer-deselect', label: 'Deselect / Close', description: 'Clear the pixel selection, deselect layers, or close the open dialog', category: 'layers', keys: ['Esc'] },
+  { id: 'layer-rename', label: 'Rename Layer', description: 'Double-click a layer name in the Layers panel', category: 'layers', keys: ['Double-click'] },
 
-  // General & Modals
+  // General
   { id: 'modal-shortcuts', label: 'Keyboard Shortcuts Reference', description: 'Open this searchable shortcuts guide', category: 'general', keys: ['?'] },
-  { id: 'modal-export', label: 'Export Animation', description: 'Open frame range and video export modal', category: 'general', keys: ['⌘ / Ctrl', 'E'] },
+  { id: 'file-save', label: 'Save Project', description: 'Download the project as a .v12proj.json file (includes images)', category: 'general', keys: ['⌘ / Ctrl', 'S'] },
+  { id: 'file-open', label: 'Open Project', description: 'Load a saved .v12proj.json file', category: 'general', keys: ['⌘ / Ctrl', 'O'] },
+  { id: 'file-import', label: 'Import Images', description: 'Import one or more image files as layers', category: 'general', keys: ['⌘ / Ctrl', 'I'] },
+  { id: 'modal-export', label: 'Export Animation', description: 'Open the frame-range / video export dialog', category: 'general', keys: ['⌘ / Ctrl', 'E'] },
 ];
 
 export const KeyboardShortcutsModal: React.FC = () => {
-  const { isShortcutsModalOpen, setIsShortcutsModalOpen } = useStore();
+  const isShortcutsModalOpen = useStore(s => s.isShortcutsModalOpen);
+  const setIsShortcutsModalOpen = useStore(s => s.setIsShortcutsModalOpen);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'tools' | 'canvas' | 'timeline' | 'layers' | 'general'>('all');
 
-  // Listen for global shortcut key '?' or Cmd/Ctrl+/
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if typing in an input or textarea
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
-        return;
-      }
-
-      if ((e.key === '?' || (e.key === '/' && (e.metaKey || e.ctrlKey))) && !e.shiftKey) {
-        e.preventDefault();
-        setIsShortcutsModalOpen(!isShortcutsModalOpen);
-      } else if (e.key === 'Escape' && isShortcutsModalOpen) {
-        setIsShortcutsModalOpen(false);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isShortcutsModalOpen, setIsShortcutsModalOpen]);
+  // Global '?' and Esc handling lives in App.tsx (react-hotkeys-hook) to avoid double-toggling.
 
   const filteredShortcuts = useMemo(() => {
     return SHORTCUTS.filter(s => {

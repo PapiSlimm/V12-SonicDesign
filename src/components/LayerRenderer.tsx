@@ -1,3 +1,7 @@
+/**
+ * @deprecated Legacy per-layer renderer. Canvas.tsx renders layers directly; this component is kept
+ * only for reference and is not imported anywhere.
+ */
 import React, { useEffect, useRef } from 'react';
 import { Layer } from '../core/types';
 
@@ -26,7 +30,7 @@ export const LayerRenderer: React.FC<LayerRendererProps> = React.memo(({
 
   useEffect(() => {
     if (!isVisibleInViewport) return;
-    if (layer.id === (isSelected ? layer.id : '') && canvasRef?.current && layer.bitmap) {
+    if (isSelected && canvasRef?.current && layer.bitmap) {
       // Drawing of the selected layer to the shared interactive canvas is handled by Canvas.tsx effect
       return;
     }
@@ -115,7 +119,7 @@ export const LayerRenderer: React.FC<LayerRendererProps> = React.memo(({
     );
   }
 
-  if (layer.id === isSelected && canvasRef) {
+  if (isSelected && canvasRef) {
     return <canvas ref={canvasRef} style={style} />;
   }
 

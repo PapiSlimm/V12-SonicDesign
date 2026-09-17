@@ -3,11 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+    <meta name="theme-color" content="#1a1a1a" />
+    <meta name="description" content="V12SonicDesign Studio — motion graphics, compositing and image editing in the browser." />
+    <title>V12SonicDesign Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=Space+Grotesk:wght@400;500;700&family=Montserrat:wght@400;700;900&family=Roboto:wght@400;700;900&family=Playfair+Display:wght@400;700;900&family=Outfit:wght@400;700;900&family=JetBrains+Mono:wght@400;700&family=Bebas+Neue&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      html, body, #root { height: 100%; margin: 0; background: #1a1a1a; color: #fff; }
+      body { font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; overscroll-behavior: none; }
+      /* Hide scrollbars in option bars without disabling scrolling */
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      /* Slim dark scrollbars for panels */
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: #1a1a1a; }
+      ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

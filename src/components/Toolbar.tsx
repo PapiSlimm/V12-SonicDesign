@@ -15,9 +15,12 @@ import {
   Layers,
   PenTool,
   Keyboard,
-  Sparkles
+  Sparkles,
+  Route
 } from 'lucide-react';
 import { useStore } from '../store';
+import { LayerFactory } from '../core/layers/LayerFactory';
+import { uid } from '../core/layers/layerUtils';
 
 interface ToolbarProps {
   selectedTool: Tool;
@@ -25,7 +28,8 @@ interface ToolbarProps {
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({ selectedTool, setSelectedTool }) => {
-  const { setIsShortcutsModalOpen, addLayer, setSelectedLayerId } = useStore();
+  const setIsShortcutsModalOpen = useStore(s => s.setIsShortcutsModalOpen);
+  const addLayer = useStore(s => s.addLayer);
 
   const tools: { id: Tool, icon: any, label: string, shortcut: string }[] = [
     { id: 'move', icon: Move, label: 'Move / Selection (V)', shortcut: 'V' },
@@ -35,8 +39,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({ selectedTool, setSelectedTool 
     { id: 'marquee', icon: Square, label: 'Marquee (M)', shortcut: 'M' },
     { id: 'lasso', icon: Lasso, label: 'Lasso (L)', shortcut: 'L' },
     { id: 'text', icon: TypeIcon, label: 'Text Tool (T)', shortcut: 'T' },
-    { id: 'text-animator', icon: Wind, label: 'Text Animator', shortcut: 'Shift+T' },
-    { id: 'motion-path', icon: Wind, label: 'Motion Path', shortcut: 'Shift+P' },
+    { id: 'text-animator', icon: Wind, label: 'Text Animator (Shift+T)', shortcut: 'Shift+T' },
+    { id: 'motion-path', icon: Route, label: 'Motion Path (Shift+P)', shortcut: 'Shift+P' },
     { id: 'gradient', icon: Layers, label: 'Gradient (G)', shortcut: 'G' },
     { id: 'eyedropper', icon: Pipette, label: 'Eyedropper (I)', shortcut: 'I' },
     { id: 'hand', icon: Hand, label: 'Hand / Pan (Space)', shortcut: 'Space' },
@@ -45,7 +49,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ selectedTool, setSelectedTool 
   ];
 
   const handleAddParticleLayer = () => {
-    const particleLayerId = `particles-${Date.now()}`;
+    const particleLayerId = uid('particles');
     addLayer({
       id: particleLayerId,
       name: 'Procedural Particles',
@@ -55,7 +59,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ selectedTool, setSelectedTool 
       opacity: 1,
       blendMode: 'screen',
       bitmap: null,
-      adjustments: { brightness: 100, contrast: 100, saturation: 100, hue: 0, opacity: 1 },
+      adjustments: LayerFactory.createDefaultAdjustments(),
       transform: { x: 960, y: 540, scaleX: 1, scaleY: 1, rotation: 0 },
       proceduralSettings: {
         type: 'particles',
@@ -77,8 +81,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ selectedTool, setSelectedTool 
           rate: 40
         }
       }
-    });
-    setSelectedLayerId(particleLayerId);
+    }, 'Add Particle System');
   };
 
   return (

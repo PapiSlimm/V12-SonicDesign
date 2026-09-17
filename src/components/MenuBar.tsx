@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { HelpModal } from './HelpModal';
 import { useStore } from '../store/index';
 import { Check, Layout, Plus, Save } from 'lucide-react';
@@ -12,26 +12,55 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onAction }) => {
   const [isSavePromptOpen, setIsSavePromptOpen] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
 
-  const {
-    currentWorkspace,
-    customWorkspaces,
-    setWorkspace,
-    saveCustomWorkspace
-  } = useStore();
+  const currentWorkspace = useStore(s => s.currentWorkspace);
+  const customWorkspaces = useStore(s => s.customWorkspaces);
+  const setWorkspace = useStore(s => s.setWorkspace);
+  const saveCustomWorkspace = useStore(s => s.saveCustomWorkspace);
+  const projectName = useStore(s => s.projectName);
+  const setProjectName = useStore(s => s.setProjectName);
+  const dirty = useStore(s => s.dirty);
 
   const presetWorkspaces = ['Animation', 'Compositing', 'Editing', 'Standard Studio'];
 
-  const menus = [
-    { label: 'File', items: ['New', 'Open', 'Import Asset', 'Save', 'Export'] },
-    { label: 'Edit', items: ['Undo', 'Redo', 'Cut', 'Copy', 'Paste', 'Fill'] },
-    { label: 'Image', items: ['Adjustments', 'Curves', 'Chroma Key', 'LUTs'] },
-    { label: 'Layer', items: ['New Layer', 'Duplicate Layer', 'Delete Layer', 'Merge Visible'] },
-    { label: 'Motion', items: ['Keyframing', 'Graph Editor', 'Easing Editor', 'Motion Paths', 'Physics'] },
-    { label: 'Typography', items: ['Kinetic Text', '3D Text Engine', 'Variable Fonts'] },
-    { label: 'AI', items: ['Generative Fill', 'Sky Replacement', 'Enhance', 'Auto-Animate'] },
-    { label: 'Window', items: ['Layers', 'Properties', 'History', 'Timeline'] },
-    { label: 'Help', items: ['About', 'Shortcuts'] },
+  const menus: { label: string; items: { name: string; shortcut?: string }[] }[] = [
+    { label: 'File', items: [
+      { name: 'New' }, { name: 'Open', shortcut: 'Ctrl+O' }, { name: 'Save', shortcut: 'Ctrl+S' }, { name: 'Import Asset', shortcut: 'Ctrl+I' },
+      { name: 'Export', shortcut: 'Ctrl+E' }, { name: 'Export PNG Frame' }, { name: 'Export JPG Frame' }
+    ] },
+    { label: 'Edit', items: [
+      { name: 'Undo', shortcut: 'Ctrl+Z' }, { name: 'Redo', shortcut: 'Ctrl+Shift+Z' }, { name: 'Duplicate', shortcut: 'Ctrl+D' },
+      { name: 'Select All' }, { name: 'Deselect', shortcut: 'Esc' }, { name: 'Fill', shortcut: 'G' }
+    ] },
+    { label: 'Image', items: [{ name: 'Adjustments' }, { name: 'Curves' }, { name: 'Chroma Key' }, { name: 'Merge Visible' }] },
+    { label: 'Layer', items: [
+      { name: 'New Layer' }, { name: 'Duplicate Layer', shortcut: 'Ctrl+D' }, { name: 'Delete Layer', shortcut: 'Del' },
+      { name: 'Group Layers', shortcut: 'Ctrl+G' }, { name: 'Merge Visible' }, { name: 'Add Text Animator' }, { name: 'Layer Styles' }
+    ] },
+    { label: 'Motion', items: [
+      { name: 'Add Keyframe', shortcut: 'Ctrl+K' }, { name: 'Keyframing' }, { name: 'Graph Editor' }, { name: 'Easing Editor' }, { name: 'Motion Paths', shortcut: 'Shift+P' }
+    ] },
+    { label: 'Typography', items: [{ name: 'Text Layer', shortcut: 'T' }, { name: 'Kinetic Text', shortcut: 'Shift+T' }, { name: '3D Text Engine' }] },
+    { label: 'AI', items: [{ name: 'Generative Fill' }, { name: 'Sky Replacement' }, { name: 'Enhance' }, { name: 'Auto-Animate' }] },
+    { label: 'View', items: [
+      { name: 'Zoom In', shortcut: 'Ctrl++' }, { name: 'Zoom Out', shortcut: 'Ctrl+-' }, { name: 'Reset Zoom', shortcut: 'Ctrl+0' }, { name: 'Fit to Screen', shortcut: 'Shift+0' }
+    ] },
+    { label: 'Window', items: [{ name: 'Layers' }, { name: 'Properties' }, { name: 'History' }, { name: 'Motion' }, { name: 'Timeline' }] },
+    { label: 'Help', items: [{ name: 'Shortcuts', shortcut: '?' }, { name: 'About' }] },
   ];
+
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!openMenu) return;
+    const onDown = (e: MouseEvent) => {
+      if (barRef.current && !barRef.current.contains(e.target as Node)) setOpenMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenMenu(null); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [openMenu]);
 
   const handleSaveWorkspaceSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,7 +72,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onAction }) => {
   };
 
   return (
-    <div className="h-8 bg-[#1a1a1a] border-b border-[#0a0a0a] flex items-center justify-between px-4 text-[11px] text-gray-300 z-30 select-none">
+    <div ref={barRef} className="h-8 bg-[#1a1a1a] border-b border-[#0a0a0a] flex items-center justify-between px-4 text-[11px] text-gray-300 z-30 select-none shrink-0">
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2 mr-2">
           <div className="w-5 h-5 bg-blue-600 rounded flex items-center justify-center text-white font-bold text-[10px]">V</div>
@@ -51,25 +80,31 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onAction }) => {
         </div>
 
         {menus.map((menu) => (
-          <div key={menu.label} className="relative group cursor-default hover:bg-[#3a3a3a] px-2 py-1 rounded">
+          <div
+            key={menu.label}
+            className={`relative cursor-default px-2 py-1 rounded ${openMenu === menu.label ? 'bg-[#3a3a3a] text-white' : 'hover:bg-[#3a3a3a]'}`}
+            onMouseDown={(e) => { e.preventDefault(); setOpenMenu(openMenu === menu.label ? null : menu.label); }}
+            onMouseEnter={() => { if (openMenu && openMenu !== menu.label) setOpenMenu(menu.label); }}
+          >
             {menu.label}
-            <div className="absolute top-full left-0 mt-0 w-40 bg-[#2a2a2a] border border-[#1a1a1a] shadow-xl hidden group-hover:block z-50 rounded-b">
-              {menu.items.map((item) => (
-                <button
-                  key={item}
-                  onClick={() => {
-                    if (item === 'Shortcuts' || item === 'About') {
-                      setIsHelpOpen(true);
-                    } else {
-                      onAction(`${menu.label}:${item}`);
-                    }
-                  }}
-                  className="w-full text-left px-4 py-1.5 hover:bg-blue-600 hover:text-white text-gray-300 text-[11px] transition-colors"
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
+            {openMenu === menu.label && (
+              <div className="absolute top-full left-0 mt-0 w-52 bg-[#2a2a2a] border border-[#1a1a1a] shadow-xl z-50 rounded-b py-1" onMouseDown={(e) => e.stopPropagation()}>
+                {menu.items.map((item) => (
+                  <button
+                    key={item.name}
+                    onClick={() => {
+                      setOpenMenu(null);
+                      if (item.name === 'About') setIsHelpOpen(true);
+                      else onAction(`${menu.label}:${item.name}`);
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white text-gray-300 text-[11px] transition-colors flex items-center justify-between gap-3"
+                  >
+                    <span>{item.name}</span>
+                    {item.shortcut && <span className="text-[9px] font-mono text-gray-500">{item.shortcut}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ))}
 
@@ -128,11 +163,17 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onAction }) => {
         </div>
       </div>
 
-      {/* Right status details or quick workspace badge */}
+      {/* Project name + save state */}
       <div className="flex items-center gap-2 text-[10px] text-gray-400">
-        <span className="px-2 py-0.5 bg-[#222] border border-[#333] rounded text-gray-400 font-mono">
-          Layout: {currentWorkspace}
-        </span>
+        <input
+          value={projectName}
+          onChange={(e) => setProjectName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          className="px-2 py-0.5 bg-[#222] border border-[#333] focus:border-blue-500 rounded text-gray-200 font-mono outline-none w-44 text-right"
+          title="Project name (used for saved files and exports)"
+          spellCheck={false}
+        />
+        <span className={`w-2 h-2 rounded-full ${dirty ? 'bg-amber-400' : 'bg-emerald-500'}`} title={dirty ? 'Unsaved changes — Ctrl+S to save' : 'All changes saved'} />
       </div>
 
       {/* Save Custom Workspace Modal */}
