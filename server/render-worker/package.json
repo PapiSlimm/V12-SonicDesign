@@ -1,0 +1,10 @@
+{
+  "name": "v12-render-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Server-side transcoder for V12SonicDesign Studio: WebM/PNG-sequence → MP4 (H.264/AAC) via FFmpeg",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "express": "^4.21.2", "multer": "^1.4.5-lts.1" },
+  "engines": { "node": ">=20" }
+}

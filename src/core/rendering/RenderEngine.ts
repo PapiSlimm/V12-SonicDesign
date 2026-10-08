@@ -1,6 +1,8 @@
 import { Layer, MotionPath } from '../types';
 import { DOC_WIDTH, DOC_HEIGHT, SHAPE_SIZE, buildFontString, getLayerBox } from '../layers/layerUtils';
 import { buildPath2D } from './vectorPath';
+import { getAnalysisSync, resolveAudioSrc } from '../audio';
+import { AudioReactiveRenderer, getSharedRenderer, newSignal } from '../audio/AudioReactiveRenderer';
 
 export interface CompositeOptions {
   /** Pre-processed (chroma keyed / curve adjusted) canvases keyed by layer id. */
@@ -12,6 +14,27 @@ export interface CompositeOptions {
   background?: string | null;
   /** Skip a set of layer ids (e.g. layers currently used as masks). */
   skipIds?: Set<string>;
+  /** Timeline time being rendered (needed by audio-reactive layers). */
+  time?: number;
+  /** Full raw layer list (to resolve audio sources for reactive layers). */
+  allLayers?: Layer[];
+}
+
+const exportSignal = newSignal();
+
+function drawAudioReactive(ctx: CanvasRenderingContext2D, layer: Layer, opts: CompositeOptions) {
+  const settings = layer.proceduralSettings?.audioReactive;
+  if (!settings) return;
+  const renderer = getSharedRenderer(DOC_WIDTH, DOC_HEIGHT);
+  if (!renderer) return;
+  const src = resolveAudioSrc(opts.allLayers || [], settings);
+  const analysis = src ? getAnalysisSync(src, 60) : null;
+  const time = opts.time ?? 0;
+  if (analysis) AudioReactiveRenderer.sample(analysis, time, exportSignal);
+  else { exportSignal.bands.fill(0.3); exportSignal.spectrum.fill(0.3); exportSignal.rms = 0.3; exportSignal.beat = 0; }
+  renderer.resetSmoothing(); // one-shot frames must not depend on previous export frames
+  renderer.render(exportSignal, settings, time);
+  ctx.drawImage(renderer.canvas, -DOC_WIDTH / 2, -DOC_HEIGHT / 2);
 }
 
 /** Sample a point along a polyline motion path at progress 0..1. */
@@ -56,6 +79,7 @@ function hexWithAlpha(color: string, opacity: number): string {
 function drawLayerContent(ctx: CanvasRenderingContext2D, layer: Layer, opts: CompositeOptions) {
   switch (layer.type) {
     case 'raster': {
+      if (layer.proceduralSettings?.type === 'audio') { drawAudioReactive(ctx, layer, opts); return; }
       if (layer.proceduralSettings?.type === 'particles') return; // procedural particles are drawn by ParticleCanvas only
       const src = opts.processedCanvases?.[layer.id] || layer.bitmap;
       if (src) ctx.drawImage(src, 0, 0);

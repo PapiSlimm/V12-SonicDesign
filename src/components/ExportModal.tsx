@@ -4,6 +4,7 @@ import { CanvasHandle } from './Canvas';
 import { createZip, canvasToBytes } from '../utils/zip';
 import { downloadBlob } from '../services/fileService';
 import { DOC_WIDTH, DOC_HEIGHT } from '../core/layers/layerUtils';
+import { analyseAudio, resolveAudioSrc } from '../core/audio';
 import {
   Download,
   X,
@@ -19,12 +20,15 @@ interface ExportModalProps {
   canvasRef: React.RefObject<CanvasHandle | null>;
 }
 
-type Format = 'png' | 'jpg' | 'webm' | 'gif_frames';
+type Format = 'png' | 'jpg' | 'webm' | 'mp4' | 'gif_frames';
+
+const RENDER_WORKER_URL: string = ((import.meta as any).env?.VITE_RENDER_WORKER_URL || '').replace(/\/$/, '');
 
 const FORMATS: { id: Format; title: string; desc: string; ext: string }[] = [
   { id: 'png', title: 'PNG Sequence (.zip)', desc: 'Lossless frames with alpha, zipped', ext: 'png' },
   { id: 'jpg', title: 'JPG Sequence (.zip)', desc: 'Compressed frames on a dark background', ext: 'jpg' },
   { id: 'webm', title: 'WebM Video', desc: 'Real-time captured video (VP9/VP8)', ext: 'webm' },
+  { id: 'mp4', title: 'MP4 Video (H.264)', desc: 'Universal MP4 with audio — rendered on the server', ext: 'mp4' },
   { id: 'gif_frames', title: 'Single Frame (PNG)', desc: 'Snapshot at the start of the range', ext: 'png' }
 ];
 
@@ -43,6 +47,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({ canvasRef }) => {
   const exportFrameRange = useStore(s => s.exportFrameRange);
   const setExportFrameRange = useStore(s => s.setExportFrameRange);
   const currentTime = useStore(s => s.currentTime);
+  const layers = useStore(s => s.layers);
 
   const [rendering, setRendering] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -72,6 +77,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({ canvasRef }) => {
   const outH = Math.round(DOC_HEIGHT * scale);
   const safeName = (projectName || 'v12-export').replace(/[^a-z0-9_-]+/gi, '_');
   const webmSupport = pickMimeType();
+  const mp4Support = !!RENDER_WORKER_URL && !!webmSupport;
+  const audioLayer = layers.find(l => l.type === 'audio' && l.audioSettings?.src);
 
   const renderFrameAt = (time: number, background: string | null): HTMLCanvasElement | null => {
     const full = canvasRef.current?.renderCompositeCanvas(time, background);
@@ -149,6 +156,34 @@ export const ExportModal: React.FC<ExportModalProps> = ({ canvasRef }) => {
     return { blob, filename: `${safeName}_${startSec.toFixed(1)}s-${endSec.toFixed(1)}s.webm` };
   };
 
+  const renderMp4 = async () => {
+    if (!RENDER_WORKER_URL) throw new Error('MP4 export needs the render worker (VITE_RENDER_WORKER_URL)');
+    const webm = await renderWebm();
+    if (cancelRef.current) throw new Error('cancelled');
+    setStatusMessage('Uploading to render worker — encoding H.264/AAC…');
+    setProgress(100);
+    const form = new FormData();
+    form.append('video', webm.blob, 'capture.webm');
+    form.append('fps', String(fps));
+    form.append('crf', '18');
+    form.append('preset', 'medium');
+    form.append('name', safeName);
+    if (audioLayer?.audioSettings?.src) {
+      try {
+        const audioBlob = await (await fetch(audioLayer.audioSettings.src)).blob();
+        form.append('audio', audioBlob, 'audio');
+      } catch (e) { console.warn('Audio track could not be attached', e); }
+    }
+    const res = await fetch(`${RENDER_WORKER_URL}/transcode`, { method: 'POST', body: form });
+    if (!res.ok) {
+      let msg = `${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch { /* ignore */ }
+      throw new Error(`Render worker: ${msg}`);
+    }
+    const blob = await res.blob();
+    return { blob, filename: `${safeName}_${startSec.toFixed(1)}s-${endSec.toFixed(1)}s.mp4` };
+  };
+
   const renderSingle = async () => {
     const canvas = renderFrameAt(startSec, transparent ? null : '#111111');
     if (!canvas) throw new Error('Canvas unavailable');
@@ -167,9 +202,16 @@ export const ExportModal: React.FC<ExportModalProps> = ({ canvasRef }) => {
     setRenderedPreviewUrl(null);
     setStatusMessage('Initializing frame renderer…');
     try {
+      // Audio-reactive layers need their offline analysis ready before the first frame
+      const srcs = Array.from(new Set(layers.filter(l => l.proceduralSettings?.type === 'audio').map(l => resolveAudioSrc(layers, l.proceduralSettings?.audioReactive)).filter(Boolean))) as string[];
+      if (srcs.length) {
+        setStatusMessage('Analysing audio tracks…');
+        await Promise.all(srcs.map(src => analyseAudio(src, 60)));
+      }
       let result: { blob: Blob; filename: string };
       if (format === 'png' || format === 'jpg') result = await renderSequence(format);
       else if (format === 'webm') result = await renderWebm();
+      else if (format === 'mp4') result = await renderMp4();
       else result = await renderSingle();
       setResultBlob(result);
       setRenderComplete(true);
@@ -265,7 +307,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({ canvasRef }) => {
                 <option value={0.25}>480 × 270</option>
               </select>
               <label className="flex items-center gap-1.5 text-[10px] text-gray-400 cursor-pointer">
-                <input type="checkbox" checked={transparent} onChange={(e) => setTransparent(e.target.checked)} className="accent-blue-500" disabled={format === 'jpg' || format === 'webm'} />
+                <input type="checkbox" checked={transparent} onChange={(e) => setTransparent(e.target.checked)} className="accent-blue-500" disabled={format === 'jpg' || format === 'webm' || format === 'mp4'} />
                 Transparent background
               </label>
             </div>
@@ -275,15 +317,15 @@ export const ExportModal: React.FC<ExportModalProps> = ({ canvasRef }) => {
             <label className="text-[11px] font-bold text-gray-300 uppercase tracking-wider flex items-center gap-1.5">
               <ImageIcon size={13} className="text-blue-400" /> Export Format
             </label>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-5 gap-2">
               {FORMATS.map((fmt) => {
-                const disabled = fmt.id === 'webm' && !webmSupport;
+                const disabled = (fmt.id === 'webm' && !webmSupport) || (fmt.id === 'mp4' && !mp4Support);
                 return (
                   <div
                     key={fmt.id}
                     onClick={() => !disabled && setExportFrameRange({ format: fmt.id })}
                     className={`p-3 rounded-xl border transition-all ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'} ${format === fmt.id ? 'bg-blue-600/20 border-blue-500 shadow-[0_0_12px_rgba(59,130,246,0.2)]' : 'bg-[#282828] border-[#3a3a3a] hover:bg-[#333]'}`}
-                    title={disabled ? 'Video recording is not supported in this browser' : fmt.desc}
+                    title={disabled ? (fmt.id === 'mp4' ? 'MP4 export needs the render worker service (set VITE_RENDER_WORKER_URL)' : 'Video recording is not supported in this browser') : fmt.desc}
                   >
                     <div className="text-xs font-bold text-white">{fmt.title}</div>
                     <div className="text-[10px] text-gray-400 mt-1">{fmt.desc}</div>
@@ -293,6 +335,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({ canvasRef }) => {
             </div>
             {format === 'webm' && (
               <p className="text-[10px] text-gray-500">Video is captured in real time, so a {(endSec - startSec).toFixed(1)}s segment takes about {(endSec - startSec).toFixed(1)}s to record. Audio tracks are not included.</p>
+            )}
+            {format === 'mp4' && (
+              <p className="text-[10px] text-gray-500">Captured in real time, then encoded to H.264/AAC on the server{audioLayer ? ` with “${audioLayer.name}” muxed in` : ''}. Plays everywhere (phones, social, NLEs).</p>
             )}
           </div>
 

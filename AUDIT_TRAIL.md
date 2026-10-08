@@ -148,3 +148,20 @@ Playwright smoke pass 2     → 13/13 (pen tool + close + anchor drag, gradient 
 - WebM export records in real time (no audio); PNG sequences are the lossless path.
 - Masks in the DOM canvas follow the mask layer's position but not its rotation/scale (the exporter handles full transforms).
 - Adjustment layers use `backdrop-filter`, which Firefox applies slightly differently than Chromium.
+
+
+---
+
+## Update 2026-10-08 — Multimedia pipeline (audio-reactive + server MP4)
+
+Shipped (all verified: `tsc` 0 errors, `vite build` OK, Playwright 44/44 across three suites, 0 console errors):
+
+- `src/core/audio/AudioAnalysis.ts` — offline audio analysis: own radix-2 FFT, Hann window, 4 band energies + 64-bin log spectrum + RMS + spectral-flux onset per frame (60 fps), beat detection (adaptive threshold) and BPM estimate; memoised per URL; `bakeKeyframes()` turns any signal into a keyframe track. `LiveAnalyser` wraps `AnalyserNode` for mic preview with preallocated buffers.
+- `src/core/audio/AudioReactiveRenderer.ts` — WebGL2 fullscreen-triangle shader (bars / ring / wave / blob / grid), spectrum uploaded as a 64×1 R8 texture via `texSubImage2D`, premultiplied-alpha output, deterministic per (time, analysis, settings); Canvas-2D fallback; shared offscreen instance for export.
+- `src/components/AudioReactiveCanvas.tsx` — the layer (renders at 0.5× and upscales for 60 fps on mobile; no per-frame allocations) + `AudioReactivePanel.tsx` (source / style / colours / sensitivity / smoothing / detail / band / mirror / transparent, and Audio → Keyframes baking available on every layer).
+- Integrated in `Canvas.tsx`, `RenderEngine.ts` (export renders the same shader frame), `store` (`addAudioReactiveLayer`, `replaceKeyframeTrack`), `Toolbar` (quick-add), `ExportModal` (pre-analyses audio before rendering).
+- `server/render-worker/` — Express + FFmpeg Docker service: `/transcode` (WebM → H.264/AAC MP4, audio muxed, CFR, faststart) and `/sequence` (PNG zip → MP4); per-job tmp dirs, concurrency cap, timeouts, health check. `render.yaml` now deploys it and injects `VITE_RENDER_WORKER_URL` into the static site; Export dialog gained “MP4 Video (H.264)”.
+- `scripts/transcode.sh` + `batch-transcode.sh` — flag-by-flag documented SVT-AV1/Opus DASH ladder + x264/AAC fallback (CPU) and NVENC ladder (GPU), VMAF verification block, bit-exact PTS handling (`setpts`, `aresample=async=1:first_pts=0`, `-fps_mode cfr`, fixed GOP).
+- `docs/PIPELINE.md` — component architecture, IPC, failure handling, operational commands.
+
+Known limitation: audio tracks are `blob:` URLs and are not embedded in saved `.v12proj.json` files yet (re-import the track after opening a project). Tracked as P2-07 prerequisite.

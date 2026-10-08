@@ -97,7 +97,7 @@ export function getLayerBox(layer: Layer): { w: number; h: number; offsetX: numb
       return { w: b.w, h: b.h, offsetX: b.x, offsetY: b.y };
     }
     case 'raster':
-      if (layer.proceduralSettings?.type === 'particles') return { w: DOC_WIDTH, h: DOC_HEIGHT, offsetX: -DOC_WIDTH / 2, offsetY: -DOC_HEIGHT / 2 };
+      if (layer.proceduralSettings?.type === 'particles' || layer.proceduralSettings?.type === 'audio') return { w: DOC_WIDTH, h: DOC_HEIGHT, offsetX: -DOC_WIDTH / 2, offsetY: -DOC_HEIGHT / 2 };
       if (layer.bitmap) return { w: layer.bitmap.width, h: layer.bitmap.height, offsetX: 0, offsetY: 0 };
       return { w: DOC_WIDTH, h: DOC_HEIGHT, offsetX: 0, offsetY: 0 };
     case 'adjustment':

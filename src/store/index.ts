@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { Layer, Tool, MotionPath, Adjustments, BlendMode, Transform, ThemeSettings, ProjectTemplate, Asset, AssetFolder, Keyframe, LayerStyles } from '../core/types';
 import { LayerFactory } from '../core/layers/LayerFactory';
 import { snapshotLayers, uid, collectDescendants } from '../core/layers/layerUtils';
+import { DEFAULT_AUDIO_REACTIVE, findDefaultAudioSource } from '../core/audio';
 
 export const MAX_HISTORY = 40;
 
@@ -87,7 +88,7 @@ interface AppState {
     startSec: number;
     endSec: number;
     fps: number;
-    format: 'png' | 'jpg' | 'webm' | 'gif_frames';
+    format: 'png' | 'jpg' | 'webm' | 'mp4' | 'gif_frames';
   };
 
   // Solo Layer State
@@ -191,6 +192,8 @@ interface AppState {
   addTextAnimatorLayer: (x?: number, y?: number) => void;
   updateKeyframeTime: (layerId: string, property: string, keyframeIndex: number, newTime: number, commit?: boolean) => number;
   addAudioLayer: (src: string, name?: string, peaks?: number[], duration?: number) => void;
+  addAudioReactiveLayer: () => void;
+  replaceKeyframeTrack: (layerId: string, property: string, keyframes: Keyframe[], label?: string) => void;
   toggleLayerVisibility: (id: string) => void;
   setAdjustments: (adjustments: Adjustments) => void;
   setBlendMode: (mode: BlendMode) => void;
@@ -1088,6 +1091,37 @@ export const useStore = create<AppState>((set, get) => ({
     };
     get().addLayer(newLayer, `Add Audio: ${name}`);
   },
+
+  addAudioReactiveLayer: () => {
+    const layers = get().layers;
+    const newLayer: Layer = {
+      id: uid('audio-viz'),
+      name: `Audio Visualizer ${layers.length + 1}`,
+      visible: true,
+      locked: false,
+      opacity: 1,
+      blendMode: 'screen',
+      adjustments: LayerFactory.createDefaultAdjustments(),
+      bitmap: null,
+      type: 'raster',
+      transform: { x: 960, y: 540, scaleX: 1, scaleY: 1, rotation: 0 },
+      proceduralSettings: {
+        type: 'audio',
+        audioReactive: { ...DEFAULT_AUDIO_REACTIVE, sourceLayerId: findDefaultAudioSource(layers) }
+      }
+    };
+    get().addLayer(newLayer, 'Add Audio Visualizer');
+  },
+
+  replaceKeyframeTrack: (layerId, property, keyframes, label) => set((state) => {
+    const layer = state.layers.find(l => l.id === layerId);
+    if (!layer) return state;
+    const newAnimations = { ...(layer.animations || {}) };
+    const sorted = [...keyframes].sort((a, b) => a.time - b.time);
+    newAnimations[property] = { keyframes: sorted, currentValue: (layer.transform as any)[property] ?? layer.opacity };
+    const newLayers = state.layers.map(l => l.id === layerId ? { ...l, animations: newAnimations } : l);
+    return { layers: newLayers, ...pushHistory(state, newLayers, label || `Bake ${property}`) };
+  }),
 
   newProject: () => {
     const layers = createInitialLayers();

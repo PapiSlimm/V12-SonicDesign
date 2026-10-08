@@ -118,11 +118,36 @@ export interface ParticleSystemSettings {
   rate?: number;
 }
 
+export type AudioReactiveStyle = 'bars' | 'ring' | 'wave' | 'blob' | 'grid';
+
+export interface AudioReactiveSettings {
+  /** Layer id of the audio layer that drives this visualizer (offline-analysed, deterministic for export). */
+  sourceLayerId: string | null;
+  /** Live microphone input instead of the audio layer (preview only — not exportable). */
+  useMicrophone: boolean;
+  style: AudioReactiveStyle;
+  primaryColor: string;
+  secondaryColor: string;
+  /** Overall response multiplier (0.1–4). */
+  sensitivity: number;
+  /** 0–1: temporal smoothing of band energies. */
+  smoothing: number;
+  /** Number of bars / grid cells / ring spokes. */
+  detail: number;
+  /** Mirror the spectrum left/right. */
+  mirror: boolean;
+  /** Draw on transparent background (true) or fill with secondaryColor at low alpha (false). */
+  transparent: boolean;
+  /** Which band drives geometry size: 0 = sub-bass, 1 = bass, 2 = mids, 3 = highs. */
+  driveBand: 0 | 1 | 2 | 3;
+}
+
 export interface ProceduralSettings {
-  type: 'noise' | 'lsystem' | 'particles' | null;
+  type: 'noise' | 'lsystem' | 'particles' | 'audio' | null;
   noise?: { enabled: boolean; frequency: number; amplitude: number; speed: number };
   lSystem?: { enabled: boolean; axiom: string; rules: Record<string, string>; iterations: number };
   particles?: ParticleSystemSettings;
+  audioReactive?: AudioReactiveSettings;
 }
 
 export interface LayerStyleEffect {

@@ -40,6 +40,7 @@ import { generateKeyframes, isAIConfigured } from '../services/aiService';
 import { importImageFiles, pickFiles } from '../services/fileService';
 import { LayerFactory } from '../core/layers/LayerFactory';
 import { safeNumber } from '../core/layers/layerUtils';
+import { AudioReactivePanel } from './AudioReactivePanel';
 
 export const Sidebar: React.FC = () => {
   const {
@@ -965,6 +966,15 @@ export const Sidebar: React.FC = () => {
                   </div>
                 </div>
               </div>
+            )}
+
+            {currentLayer?.proceduralSettings?.type === 'audio' && currentLayer.proceduralSettings.audioReactive && (
+              <AudioReactivePanel layer={currentLayer} />
+            )}
+
+            {/* Audio → keyframes baking is available for every non-audio layer */}
+            {currentLayer && currentLayer.type !== 'audio' && currentLayer.proceduralSettings?.type !== 'audio' && (
+              <AudioReactivePanel layer={currentLayer} bakeOnly />
             )}
 
             {/* Procedural Particle System Node Properties */}

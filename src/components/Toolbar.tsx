@@ -16,7 +16,8 @@ import {
   PenTool,
   Keyboard,
   Sparkles,
-  Route
+  Route,
+  AudioLines
 } from 'lucide-react';
 import { useStore } from '../store';
 import { LayerFactory } from '../core/layers/LayerFactory';
@@ -30,6 +31,7 @@ interface ToolbarProps {
 export const Toolbar: React.FC<ToolbarProps> = ({ selectedTool, setSelectedTool }) => {
   const setIsShortcutsModalOpen = useStore(s => s.setIsShortcutsModalOpen);
   const addLayer = useStore(s => s.addLayer);
+  const addAudioReactiveLayer = useStore(s => s.addAudioReactiveLayer);
 
   const tools: { id: Tool, icon: any, label: string, shortcut: string }[] = [
     { id: 'move', icon: Move, label: 'Move / Selection (V)', shortcut: 'V' },
@@ -116,6 +118,20 @@ export const Toolbar: React.FC<ToolbarProps> = ({ selectedTool, setSelectedTool 
           <Sparkles size={18} />
           <span className="absolute left-full ml-2 px-2 py-1 bg-[#111] border border-amber-500/50 text-amber-300 text-[10px] rounded shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 font-sans font-bold">
             + Particle System Node
+          </span>
+        </button>
+      </div>
+
+      {/* Audio Visualizer quick-add — placed with the particle button */}
+      <div className="flex flex-col items-center gap-1 px-1 -mt-1">
+        <button
+          onClick={addAudioReactiveLayer}
+          className="p-2 rounded-lg transition-all group relative flex items-center justify-center text-cyan-400 hover:bg-cyan-950/40 hover:text-cyan-300 border border-cyan-500/20"
+          title="Add Audio-Reactive Visualizer Layer"
+        >
+          <AudioLines size={18} />
+          <span className="absolute left-full ml-2 px-2 py-1 bg-[#111] border border-cyan-500/50 text-cyan-300 text-[10px] rounded shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 font-sans font-bold">
+            + Audio Visualizer (reacts to your audio track)
           </span>
         </button>
       </div>

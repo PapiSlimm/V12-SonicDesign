@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef, us
 import { Tool, Layer, MotionPath } from '../core/types';
 import { ChromaKeyProcessor } from './ChromaKeyProcessor';
 import { ParticleCanvas } from './ParticleCanvas';
+import { AudioReactiveCanvas } from './AudioReactiveCanvas';
+import { resolveAudioSrc } from '../core/audio';
 import { VectorCanvas } from './VectorCanvas';
 import { useStore } from '../store/index';
 import { computeLayersAtTime } from '../hooks/useDerivedLayers';
@@ -141,6 +143,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   const setSmartGuidesEnabled = useStore(s => s.setSmartGuidesEnabled);
   const rawLayers = useStore(s => s.layers);
   const soloLayerId = useStore(s => s.soloLayerId);
+  const isPlayingNow = useStore(s => s.isPlaying);
   const startHistoryTransaction = useStore(s => s.startHistoryTransaction);
   const endHistoryTransaction = useStore(s => s.endHistoryTransaction);
   const setStatusMessage = useStore(s => s.setStatusMessage);
@@ -230,7 +233,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     canvas.width = DOC_WIDTH;
     canvas.height = DOC_HEIGHT;
     const ctx = canvas.getContext('2d');
-    if (ctx) renderComposite(ctx, source, { processedCanvases, motionPaths, soloLayerId, background });
+    if (ctx) renderComposite(ctx, source, { processedCanvases, motionPaths, soloLayerId, background, time: time ?? currentTime, allLayers: rawLayers });
     return canvas;
   }, [layers, rawLayers, processedCanvases, motionPaths, soloLayerId]);
 
@@ -1173,6 +1176,21 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                       } else updateLayer(l.id, { vectorSettings: settings });
                     }}
                   />
+                );
+              }
+
+              if (l.proceduralSettings?.type === 'audio' && l.proceduralSettings.audioReactive) {
+                return (
+                  <div key={key} style={{ ...style, left: transform.x - DOC_WIDTH / 2, top: transform.y - DOC_HEIGHT / 2, width: DOC_WIDTH, height: DOC_HEIGHT, transformOrigin: '50% 50%' }}>
+                    <AudioReactiveCanvas
+                      settings={l.proceduralSettings.audioReactive}
+                      audioSrc={resolveAudioSrc(rawLayers, l.proceduralSettings.audioReactive)}
+                      currentTime={currentTime}
+                      isPlaying={isPlayingNow}
+                      width={DOC_WIDTH}
+                      height={DOC_HEIGHT}
+                    />
+                  </div>
                 );
               }
 

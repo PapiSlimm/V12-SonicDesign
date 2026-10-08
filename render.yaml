@@ -1,5 +1,6 @@
-# Render Blueprint — V12SonicDesign Studio (static Vite site)
+# Render Blueprint — V12SonicDesign Studio
 services:
+  # Static front-end (Vite build)
   - type: web
     name: v12-sonicdesign-studio
     runtime: static
@@ -11,6 +12,11 @@ services:
         value: "22"
       - key: VITE_GEMINI_API_KEY
         sync: false
+      - key: VITE_RENDER_WORKER_URL
+        fromService:
+          type: web
+          name: v12-render-worker
+          envVarKey: RENDER_EXTERNAL_URL
     routes:
       - type: rewrite
         source: /*
@@ -19,3 +25,19 @@ services:
       - path: /assets/*
         name: Cache-Control
         value: public, max-age=31536000, immutable
+
+  # FFmpeg transcoder (WebM / PNG sequence → MP4)
+  - type: web
+    name: v12-render-worker
+    runtime: docker
+    dockerfilePath: ./server/render-worker/Dockerfile
+    dockerContext: ./server/render-worker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: MAX_JOBS
+        value: "2"
+      - key: MAX_UPLOAD_MB
+        value: "500"
+      - key: ALLOWED_ORIGIN
+        value: "*"
