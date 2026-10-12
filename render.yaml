@@ -1,4 +1,4 @@
-# Render Blueprint — V12SonicDesign Studio
+# Render Blueprint — V12SonicDesign Studio + the shared V12 media service
 services:
   # Static front-end (Vite build)
   - type: web
@@ -12,10 +12,10 @@ services:
         value: "22"
       - key: VITE_GEMINI_API_KEY
         sync: false
-      - key: VITE_RENDER_WORKER_URL
+      - key: VITE_MEDIA_URL
         fromService:
           type: web
-          name: v12-render-worker
+          name: v12-media
           envVarKey: RENDER_EXTERNAL_URL
     routes:
       - type: rewrite
@@ -26,18 +26,40 @@ services:
         name: Cache-Control
         value: public, max-age=31536000, immutable
 
-  # FFmpeg transcoder (WebM / PNG sequence → MP4)
+  # Shared V12 media service: encode + stream + visualize for SonicDesign, SonicWave, SonicStream,
+  # SonicVisual, GameWorld. Apps talk to it through the shared Postgres (v12media schema) — the only
+  # HTTP here is the browser upload edge used by static front-ends.
   - type: web
-    name: v12-render-worker
+    name: v12-media
     runtime: docker
-    dockerfilePath: ./server/render-worker/Dockerfile
-    dockerContext: ./server/render-worker
+    dockerfilePath: ./v12-media/Dockerfile
+    dockerContext: ./v12-media
     plan: starter
     healthCheckPath: /health
+    disk:
+      name: media-data
+      mountPath: /data/media
+      sizeGB: 10
     envVars:
+      - key: DATABASE_URL          # the shared V12 Postgres (v12-postgres) — paste its Internal Connection String
+        sync: false
+      - key: MEDIA_ROLE
+        value: all
       - key: MAX_JOBS
         value: "2"
       - key: MAX_UPLOAD_MB
         value: "500"
       - key: ALLOWED_ORIGIN
         value: "*"
+      - key: MEDIA_LOCAL_DIR       # used until MEDIA_S3_* (R2 / GCS) is set; then outputs go to the bucket
+        value: /data/media
+      - key: MEDIA_S3_ENDPOINT
+        sync: false
+      - key: MEDIA_S3_BUCKET
+        sync: false
+      - key: MEDIA_S3_KEY
+        sync: false
+      - key: MEDIA_S3_SECRET
+        sync: false
+      - key: MEDIA_PUBLIC_BASE_URL
+        sync: false

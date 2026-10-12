@@ -165,3 +165,22 @@ Shipped (all verified: `tsc` 0 errors, `vite build` OK, Playwright 44/44 across 
 - `docs/PIPELINE.md` — component architecture, IPC, failure handling, operational commands.
 
 Known limitation: audio tracks are `blob:` URLs and are not embedded in saved `.v12proj.json` files yet (re-import the track after opening a project). Tracked as P2-07 prerequisite.
+
+---
+
+## Update 2026-10-12 — Shared V12 media service (`v12-media/`)
+
+Directive: SonicDesign, SonicWave, SonicStream, SonicVisual and GameWorld all need encode + stream + visualize — build it once, behind the shared DB, no inter-service HTTP.
+
+Shipped (verified: package `tsc` 0 errors; 5/5 end-to-end tests against a real Postgres 16 + FFmpeg 6.1 covering every job kind, dedup, SKIP LOCKED claiming, retry/stale re-queue, LISTEN/NOTIFY waits and the browser ingress; SonicDesign `tsc` 0 errors, `vite build` OK, Playwright 44/44, 0 console errors):
+
+- `v12-media/sql/001_v12media.sql` — schema `v12media`: `assets` (masters, dedup `(app, sha256)`), `jobs` (queue: priority, `dedup_key`, attempts, heartbeat, progress, result), `renditions` (every output + public URL), `analysis` (typed-array audio analysis), trigger → `pg_notify('v12media_jobs')`. Idempotent; created on boot.
+- `v12-media/src/client/MediaClient.ts` — the app-facing API over `pg`: `registerAsset`, `enqueue` / `enqueueBundle` (identical requests share a job), `waitForJob` (one shared LISTEN connection per pool + safety poll), `renditions`, `playbackUrl`, `analysis`, `cancel`, `onJobEvent`.
+- `v12-media/src/worker/` — `index.ts` claim loop (`FOR UPDATE SKIP LOCKED`, heartbeats, lost-worker re-queue bounded by `max_attempts`, per-job tmp dir, transactional result write); `handlers.ts` (`transcode.mp4`, `stream.hls` single-decode multi-rung ladder, `stream.dash` SVT-AV1/Opus with H.264 fallback, `audio.master` two-pass R128 loudnorm → Opus/AAC/MP3 + waveform peaks, `analyze.audio`, `video.thumbnail`); `ffmpeg.ts` (probe, encoder detection, progress, hard timeouts); `storage.ts` (S3-compatible R2/GCS/MinIO via `@aws-sdk`, or local disk served at `/media/*`); `ingress.ts` (browser edge: `/assets`, `/jobs`, `/assets/:id`, `/health`, and the unchanged SonicDesign `/transcode` + `/sequence` contract).
+- `v12-media/src/analyze/core.ts` — the analysis math extracted from SonicDesign into a pure module (no DOM/Node) so browser and worker produce identical numbers; `analyze/node.ts` decodes via ffmpeg. `v12-media/src/visualize/` — the WebGL2 audio-reactive renderer as a shared module.
+- SonicDesign now imports both from the package (`src/core/audio/AudioAnalysis.ts` keeps only the browser parts: AudioContext decode, memo cache, `LiveAnalyser`; `AudioReactiveRenderer.ts` re-exports). Vite alias + tsconfig paths `@v12/media/analyze`, `@v12/media/visualize`; `ExportModal` reads `VITE_MEDIA_URL` (falls back to `VITE_RENDER_WORKER_URL`).
+- `render.yaml` — the Docker service is now `v12-media` (10 GB disk, `DATABASE_URL` + optional `MEDIA_S3_*` as secrets); the static site gets `VITE_MEDIA_URL` from it. `server/render-worker/` is kept but marked superseded (nothing deleted).
+- Bug found and fixed during the e2e run: the ingress created a `MediaClient` per request and each opened its own `LISTEN` connection that was never released → connection leak that would have exhausted the pool under load. Fixed by sharing one `Notifier` per pool (`UNLISTEN` + release on close).
+- Docs: `v12-media/README.md` (deploy, per-app integration, browser API, tests, promote-to-own-repo), `docs/PIPELINE.md` updated, `ROADMAP.md` P2-03 amended.
+
+Deployment steps that only Papi can do: set `DATABASE_URL` on the `v12-media` service in Render (shared V12 Postgres internal URL); optionally the R2 `MEDIA_S3_*` keys so renditions go to the bucket instead of the Render disk.

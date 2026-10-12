@@ -18,9 +18,13 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@v12/media/*": [
+        "./v12-media/src/*/index.ts"
       ]
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "include": ["src", "vite.config.ts", "v12-media/src/analyze", "v12-media/src/visualize", "v12-media/src/types.ts"]
 }

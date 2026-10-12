@@ -16,7 +16,7 @@ Rule: every item below is shipped by the daily build agent, verified (tsc + buil
 ## Phase 2 — Make it sticky (weeks 5–8)
 - [ ] P2-01 Template gallery (20 launch templates: social ads, lower-thirds, logo stings, YouTube intros) — "start from template"
 - [ ] P2-02 Share link (view-only render + remix), public project pages
-- [x] P2-03 MP4 export via server render worker (`server/render-worker`, FFmpeg H.264/AAC, audio muxed) — shipped 2026-10-08
+- [x] P2-03 MP4 export via server render worker (FFmpeg H.264/AAC, audio muxed) — shipped 2026-10-08; generalised into the shared V12 media service `v12-media/` (encode + HLS/DASH streaming + audio mastering + analysis + visualizer, DB-backed queue for SonicDesign/SonicWave/SonicStream/SonicVisual/GameWorld) — shipped 2026-10-12
 - [ ] P2-04 Brand Kit: fonts, colors, logos per workspace (Studio plan)
 - [ ] P2-05 Asset library: stock images (Unsplash/Pexels API), icons, sound FX
 - [x] P2-06 Audio-reactive visualizer layers (WebGL2, 5 styles) + Audio → Keyframes baking (beat/loudness/bands) — shipped 2026-10-08

@@ -1,7 +1,7 @@
 export * from './AudioAnalysis';
 import { AudioReactiveSettings, AudioReactiveStyle, Layer } from '../types';
 
-export const AudioReactiveStyleIndex: Record<AudioReactiveStyle, number> = { bars: 0, ring: 1, wave: 2, blob: 3, grid: 4 };
+export { VisualizerStyleIndex as AudioReactiveStyleIndex } from '@v12/media/visualize';
 
 export const DEFAULT_AUDIO_REACTIVE: AudioReactiveSettings = {
   sourceLayerId: null,

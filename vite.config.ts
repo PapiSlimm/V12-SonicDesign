@@ -15,6 +15,9 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
+        // Shared V12 media package (analysis math + WebGL visualizer) — same code the media worker runs.
+        '@v12/media/analyze': path.resolve(__dirname, './v12-media/src/analyze/index.ts'),
+        '@v12/media/visualize': path.resolve(__dirname, './v12-media/src/visualize/index.ts'),
       },
     },
     build: {
@@ -36,6 +39,7 @@ export default defineConfig(({ mode }) => {
       host: true,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       hmr: process.env.DISABLE_HMR !== 'true',
+      fs: { allow: ['.'] },
     },
   };
 });

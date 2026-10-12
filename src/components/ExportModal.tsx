@@ -22,7 +22,8 @@ interface ExportModalProps {
 
 type Format = 'png' | 'jpg' | 'webm' | 'mp4' | 'gif_frames';
 
-const RENDER_WORKER_URL: string = ((import.meta as any).env?.VITE_RENDER_WORKER_URL || '').replace(/\/$/, '');
+// Shared V12 media service (browser ingress). VITE_MEDIA_URL preferred; VITE_RENDER_WORKER_URL kept for older deploys.
+const RENDER_WORKER_URL: string = ((import.meta as any).env?.VITE_MEDIA_URL || (import.meta as any).env?.VITE_RENDER_WORKER_URL || '').replace(/\/$/, '');
 
 const FORMATS: { id: Format; title: string; desc: string; ext: string }[] = [
   { id: 'png', title: 'PNG Sequence (.zip)', desc: 'Lossless frames with alpha, zipped', ext: 'png' },
