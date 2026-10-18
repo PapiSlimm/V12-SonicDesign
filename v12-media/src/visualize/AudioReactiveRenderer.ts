@@ -219,8 +219,11 @@ export class AudioReactiveRenderer {
     const gl = this.gl;
     if (!gl || !this.program) return;
     // Temporal smoothing: reset when scrubbing backwards or jumping so exports stay deterministic
-    const k = Math.max(0, Math.min(0.95, settings.smoothing));
+    // Frame-rate independent smoothing: `smoothing` is defined per 1/60 s step, so a 30 fps export and a
+    // 60 fps preview converge to the same curve. Reset on backwards scrubs / jumps > 0.5 s.
     const jump = this.lastTime < 0 || time < this.lastTime || time - this.lastTime > 0.5;
+    const dt = jump ? 1 / 60 : Math.max(1e-4, time - this.lastTime);
+    const k = Math.pow(Math.max(0, Math.min(0.95, settings.smoothing)), dt * 60);
     for (let b = 0; b < 4; b++) this.smoothed[b] = jump ? signal.bands[b] : this.smoothed[b] * k + signal.bands[b] * (1 - k);
     for (let s = 0; s < SPECTRUM_BINS; s++) {
       const v = jump ? signal.spectrum[s] : this.smoothedSpec[s] * k + signal.spectrum[s] * (1 - k);

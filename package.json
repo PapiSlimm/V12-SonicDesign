@@ -9,7 +9,9 @@
     "preview": "vite preview --port 4173",
     "clean": "rimraf dist",
     "lint": "tsc --noEmit",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node tests/e2e/run.mjs",
+    "test:media": "cd v12-media && npm run build && npm test"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -21,6 +23,7 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "playwright": "^1.56.0",
     "@tailwindcss/vite": "^4.1.14",
     "@types/node": "^22.14.0",
     "@types/react": "^19.1.0",

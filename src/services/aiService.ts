@@ -2,13 +2,16 @@ import { GoogleGenAI } from "@google/genai";
 import { Keyframe } from "../core/types";
 
 /**
- * API key resolution order:
- *  1. VITE_GEMINI_API_KEY from .env.local (standard Vite convention)
- *  2. GEMINI_API_KEY injected by vite.config.ts `define` (AI Studio convention)
- *
- * NOTE: any key bundled into a browser app is visible to end users. For public deployments,
- * proxy Gemini calls through a backend instead of shipping the key.
+ * Two modes:
+ *  1. PROXY (production): VITE_MEDIA_URL is set → every Gemini call goes to `${VITE_MEDIA_URL}/ai`, the
+ *     shared V12 media service forwards it with the server-side GEMINI_API_KEY. No AI key ships in the
+ *     bundle. Requests carry the media bearer token (VITE_MEDIA_TOKEN) so the proxy can rate-limit.
+ *  2. DIRECT (local dev only): VITE_GEMINI_API_KEY / GEMINI_API_KEY in .env.local. Any key bundled into
+ *     a browser app is visible to end users — never deploy this mode.
  */
+const MEDIA_URL: string = ((import.meta as any).env?.VITE_MEDIA_URL || (import.meta as any).env?.VITE_RENDER_WORKER_URL || '').replace(/\/$/, '');
+const MEDIA_TOKEN: string = (import.meta as any).env?.VITE_MEDIA_TOKEN || '';
+
 function resolveApiKey(): string {
   const viteKey = (import.meta as any).env?.VITE_GEMINI_API_KEY as string | undefined;
   const definedKey = typeof process !== 'undefined' && process.env ? process.env.GEMINI_API_KEY : undefined;
@@ -16,18 +19,24 @@ function resolveApiKey(): string {
   return key === 'MY_GEMINI_API_KEY' ? '' : key;
 }
 
+export const aiMode = (): 'proxy' | 'direct' | 'none' => MEDIA_URL ? 'proxy' : resolveApiKey() ? 'direct' : 'none';
+
 let client: GoogleGenAI | null = null;
 function getClient(): GoogleGenAI {
-  const apiKey = resolveApiKey();
-  if (!apiKey) {
-    throw new Error('Gemini API key is not configured. Add VITE_GEMINI_API_KEY=... to .env.local and restart the dev server.');
+  if (client) return client;
+  if (MEDIA_URL) {
+    client = new GoogleGenAI({ apiKey: 'proxied', httpOptions: { baseUrl: `${MEDIA_URL}/ai`, headers: MEDIA_TOKEN ? { Authorization: `Bearer ${MEDIA_TOKEN}` } : {} } });
+    return client;
   }
-  if (!client) client = new GoogleGenAI({ apiKey });
+  const apiKey = resolveApiKey();
+  if (!apiKey) throw new Error('AI is not configured. Set VITE_MEDIA_URL (production, key stays on the server) or VITE_GEMINI_API_KEY in .env.local (local dev only).');
+  if (!(import.meta as any).env?.DEV) console.warn('[Sonic Design] Gemini key is bundled into this build — use VITE_MEDIA_URL for public deployments.');
+  client = new GoogleGenAI({ apiKey });
   return client;
 }
 
 export function isAIConfigured(): boolean {
-  return !!resolveApiKey();
+  return aiMode() !== 'none';
 }
 
 const IMAGE_MODEL = "gemini-2.5-flash-image";

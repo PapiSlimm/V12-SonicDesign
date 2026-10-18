@@ -61,7 +61,8 @@ export const AutoSaveRecoveryBanner: React.FC = () => {
       }
     };
     const timer = window.setInterval(tick, AUTOSAVE_INTERVAL_MS);
-    const onUnload = () => { void markCleanExit(); };
+    // Only a session with nothing unsaved is a clean exit; closing a dirty tab must keep the recovery snapshot.
+    const onUnload = () => { if (!useStore.getState().dirty) void markCleanExit(); };
     window.addEventListener('pagehide', onUnload);
     return () => {
       window.clearInterval(timer);

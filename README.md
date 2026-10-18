@@ -59,3 +59,12 @@ src/
 ```
 
 See `AUDIT_TRAIL.md` for the full list of issues found and fixed in the September 2026 audit.
+
+
+## Tests
+
+```bash
+npm run build && npm test        # Playwright end-to-end suite (tests/e2e): editor flows, audio pipeline, exports, autosave — 30 checks
+npm run test:media               # media service: real Postgres + ffmpeg (needs DATABASE_URL to a throwaway database)
+npx playwright install chromium  # once per machine
+```

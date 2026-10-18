@@ -9,7 +9,8 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss()],
     define: {
       // AI Studio convention: GEMINI_API_KEY from the environment. The app also reads VITE_GEMINI_API_KEY.
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || ''),
+      // Never bake an AI key into a production bundle — production AI calls go through the media service /ai proxy.
+      'process.env.GEMINI_API_KEY': JSON.stringify(mode === 'production' ? '' : (env.GEMINI_API_KEY || '')),
       'process.env.NODE_ENV': JSON.stringify(mode),
     },
     resolve: {

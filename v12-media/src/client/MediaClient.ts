@@ -10,7 +10,7 @@
  *
  * No HTTP between services: enqueue = INSERT, status = SELECT, wake-ups = pg_notify.
  */
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +43,8 @@ export interface EnqueueOptions {
   maxAttempts?: number;
   /** false → always create a new job even if an identical one exists. Default true. */
   dedup?: boolean;
+  /** require the asset to belong to this owner (user-facing callers) */
+  ownerId?: string | null;
 }
 
 export const JOB_CHANNEL = 'v12media_jobs';
@@ -56,6 +58,37 @@ export function stableHash(v: unknown): string {
 
 export function sha256Of(data: Uint8Array | string): string {
   return createHash('sha256').update(data).digest('hex');
+}
+
+export const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+
+/* ---------------- ingress grants ----------------
+ * Server-side apps mint a short-lived HMAC grant for a logged-in user; the browser sends it as
+ * `Authorization: Bearer <grant>` to the media ingress. The ingress never sees app secrets or sessions —
+ * only MEDIA_INGRESS_SECRET, shared with the apps that mint grants.
+ */
+export interface IngressGrant { app: string; ownerId: string; exp: number; quotaMb?: number }
+
+function b64url(b: Buffer | string): string { return Buffer.from(b).toString('base64url'); }
+
+export function mintGrant(secret: string, g: Omit<IngressGrant, 'exp'> & { ttlSeconds?: number }): string {
+  const payload: IngressGrant = { app: g.app, ownerId: g.ownerId, exp: Math.floor(Date.now() / 1000) + (g.ttlSeconds ?? 3600), ...(g.quotaMb ? { quotaMb: g.quotaMb } : {}) };
+  const body = b64url(JSON.stringify(payload));
+  const sig = b64url(createHmac('sha256', secret).update(body).digest());
+  return `${body}.${sig}`;
+}
+
+export function verifyGrant(secret: string, token: string): IngressGrant | null {
+  const [body, sig] = String(token || '').split('.');
+  if (!body || !sig) return null;
+  const expect = createHmac('sha256', secret).update(body).digest();
+  const got = Buffer.from(sig, 'base64url');
+  if (got.length !== expect.length || !timingSafeEqual(got, expect)) return null;
+  try {
+    const g = JSON.parse(Buffer.from(body, 'base64url').toString()) as IngressGrant;
+    if (!g.app || !g.ownerId || typeof g.exp !== 'number' || g.exp < Date.now() / 1000) return null;
+    return g;
+  } catch { return null; }
 }
 
 export class MediaClient {
@@ -94,8 +127,10 @@ export class MediaClient {
     return r.rows[0];
   }
 
-  async asset(id: string): Promise<Asset | null> {
-    const r = await this.pool.query<Asset>('SELECT * FROM v12media.assets WHERE id=$1', [id]);
+  /** Scoped to this client's app; pass ownerId to also require that owner (user-facing reads should). */
+  async asset(id: string, ownerId?: string | null): Promise<Asset | null> {
+    if (!isUuid(id)) return null;
+    const r = await this.pool.query<Asset>('SELECT * FROM v12media.assets WHERE id=$1 AND app=$2 AND ($3::text IS NULL OR owner_id=$3)', [id, this.app, ownerId ?? null]);
     return r.rows[0] ?? null;
   }
 
@@ -110,6 +145,7 @@ export class MediaClient {
 
   /** Enqueue work for an asset. Identical (asset, kind, params) requests share one job unless dedup:false. */
   async enqueue<P extends JobParams>(assetId: string, kind: JobKind, params: P = {} as P, opts: EnqueueOptions = {}): Promise<Job<P>> {
+    if (!(await this.asset(assetId, opts.ownerId))) throw new Error('asset not found in this app');
     const dedupKey = opts.dedup === false ? null : `${assetId}:${kind}:${stableHash(params)}`;
     if (dedupKey) {
       const existing = await this.pool.query<Job<P>>(
@@ -140,18 +176,23 @@ export class MediaClient {
     return jobs;
   }
 
-  async job(id: string): Promise<Job | null> {
-    const r = await this.pool.query<Job>('SELECT * FROM v12media.jobs WHERE id=$1', [id]);
+  async job(id: string, ownerId?: string | null): Promise<Job | null> {
+    if (!isUuid(id)) return null;
+    const r = await this.pool.query<Job>(
+      `SELECT j.* FROM v12media.jobs j JOIN v12media.assets a ON a.id = j.asset_id
+       WHERE j.id=$1 AND j.app=$2 AND ($3::text IS NULL OR a.owner_id=$3)`, [id, this.app, ownerId ?? null]);
     return r.rows[0] ?? null;
   }
 
-  async jobsFor(assetId: string): Promise<Job[]> {
-    const r = await this.pool.query<Job>('SELECT * FROM v12media.jobs WHERE asset_id=$1 ORDER BY created_at', [assetId]);
+  async jobsFor(assetId: string, ownerId?: string | null): Promise<Job[]> {
+    if (!(await this.asset(assetId, ownerId))) return [];
+    const r = await this.pool.query<Job>('SELECT * FROM v12media.jobs WHERE asset_id=$1 AND app=$2 ORDER BY created_at', [assetId, this.app]);
     return r.rows;
   }
 
-  async cancel(id: string): Promise<boolean> {
-    const r = await this.pool.query(`UPDATE v12media.jobs SET status='cancelled', finished_at=now() WHERE id=$1 AND status='queued'`, [id]);
+  async cancel(id: string, ownerId?: string | null): Promise<boolean> {
+    if (!(await this.job(id, ownerId))) return false;
+    const r = await this.pool.query(`UPDATE v12media.jobs SET status='cancelled', finished_at=now() WHERE id=$1 AND app=$2 AND status='queued'`, [id, this.app]);
     return (r.rowCount ?? 0) > 0;
   }
 
@@ -191,10 +232,13 @@ export class MediaClient {
 
   /* ---------------- outputs ---------------- */
 
-  async renditions(assetId: string, kind?: Rendition['kind']): Promise<Rendition[]> {
+  async renditions(assetId: string, kind?: Rendition['kind'], ownerId?: string | null): Promise<Rendition[]> {
+    if (!isUuid(assetId)) return [];
     const r = await this.pool.query<Rendition>(
-      `SELECT * FROM v12media.renditions WHERE asset_id=$1 AND ($2::text IS NULL OR kind=$2) ORDER BY height DESC NULLS LAST, created_at`,
-      [assetId, kind ?? null]);
+      `SELECT r.* FROM v12media.renditions r JOIN v12media.assets a ON a.id = r.asset_id
+       WHERE r.asset_id=$1 AND a.app=$2 AND ($4::text IS NULL OR a.owner_id=$4) AND ($3::text IS NULL OR r.kind=$3)
+       ORDER BY r.height DESC NULLS LAST, r.created_at`,
+      [assetId, this.app, kind ?? null, ownerId ?? null]);
     return r.rows;
   }
 
@@ -205,7 +249,8 @@ export class MediaClient {
     return (await this.asset(assetId))?.source_url ?? null;
   }
 
-  async analysis(assetId: string): Promise<AudioAnalysis | null> {
+  async analysis(assetId: string, ownerId?: string | null): Promise<AudioAnalysis | null> {
+    if (!(await this.asset(assetId, ownerId))) return null;
     const r = await this.pool.query('SELECT * FROM v12media.analysis WHERE asset_id=$1', [assetId]);
     return r.rows[0] ? rowToAnalysis(r.rows[0]) : null;
   }

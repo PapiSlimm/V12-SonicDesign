@@ -10,13 +10,17 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
-      - key: VITE_GEMINI_API_KEY
-        sync: false
+      # No AI key in the browser bundle: Gemini calls go through the media service's /ai proxy.
       - key: VITE_MEDIA_URL
         fromService:
           type: web
           name: v12-media
           envVarKey: RENDER_EXTERNAL_URL
+      - key: VITE_MEDIA_TOKEN      # abuse brake for the backend-less static app (public by nature; rate/quota limited server-side)
+        fromService:
+          type: web
+          name: v12-media
+          envVarKey: MEDIA_INGRESS_TOKEN
     routes:
       - type: rewrite
         source: /*
@@ -49,8 +53,16 @@ services:
         value: "2"
       - key: MAX_UPLOAD_MB
         value: "500"
-      - key: ALLOWED_ORIGIN
+      - key: ALLOWED_ORIGIN       # lock to the studio's origin once its final domain is known
         value: "*"
+      - key: MEDIA_INGRESS_TOKEN   # static bearer for backend-less apps (generated); server apps use MEDIA_INGRESS_SECRET grants
+        generateValue: true
+      - key: MEDIA_INGRESS_SECRET  # HMAC secret shared with SonicWave/SonicStream/GameWorld servers to mint user grants
+        generateValue: true
+      - key: GEMINI_API_KEY        # server-side only — the /ai proxy uses it
+        sync: false
+      - key: MEDIA_FETCH_ALLOWLIST # extra hosts the worker may download sources from (comma-separated)
+        value: ""
       - key: MEDIA_LOCAL_DIR       # used until MEDIA_S3_* (R2 / GCS) is set; then outputs go to the bucket
         value: /data/media
       - key: MEDIA_S3_ENDPOINT

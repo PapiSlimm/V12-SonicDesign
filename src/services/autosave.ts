@@ -1,5 +1,5 @@
 import { Layer, MotionPath } from '../core/types';
-import { serializeLayers, deserializeLayers, SerializedLayer } from './fileService';
+import { serializeLayersWithAudio, deserializeLayers, SerializedLayer } from './fileService';
 
 /**
  * IndexedDB-backed autosave. localStorage caps out around 5 MB, which a single 1920x1080 PNG
@@ -58,7 +58,7 @@ export async function writeAutosave(data: Omit<AutosavePayload, 'version' | 'tim
     ...data,
     version: AUTOSAVE_VERSION,
     timestamp: Date.now(),
-    layers: serializeLayers(data.layers)
+    layers: await serializeLayersWithAudio(data.layers)
   };
   await withStore('readwrite', (store) => store.put(payload, KEY));
 }

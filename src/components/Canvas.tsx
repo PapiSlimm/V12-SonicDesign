@@ -990,14 +990,18 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
               const innerShadow = styles.innerShadow?.enabled ? `inset ${styles.innerShadow.distance}px ${styles.innerShadow.distance}px ${styles.innerShadow.size}px ${styles.innerShadow.color}${alphaHex(styles.innerShadow.opacity, 0.5)}` : '';
               const bevel = styles.bevelEmboss?.enabled ? `inset ${styles.bevelEmboss.distance}px ${styles.bevelEmboss.distance}px ${styles.bevelEmboss.size}px rgba(255,255,255,${styles.bevelEmboss.opacity}), inset -${styles.bevelEmboss.distance}px -${styles.bevelEmboss.distance}px ${styles.bevelEmboss.size}px rgba(0,0,0,${styles.bevelEmboss.opacity})` : '';
               const strokeStyle = styles.stroke?.enabled ? `${styles.stroke.width}px solid ${styles.stroke.color}${alphaHex(styles.stroke.opacity, 1)}` : undefined;
-              const isFullDoc = l.type === 'adjustment' || l.type === 'group';
+              const isFullDoc = l.type === 'adjustment';
+              // Groups match the compositor (RenderEngine.drawLayerRecursive): translate to the group's
+              // (x,y), then scale/rotate/skew about origin 0 0, children positioned inside that frame.
+              const isGroup = l.type === 'group';
 
               const style: React.CSSProperties = {
                 position: 'absolute',
                 left: isFullDoc ? 0 : transform.x + pathOffset.x,
                 top: isFullDoc ? 0 : transform.y + pathOffset.y,
-                width: l.type === 'shape' ? SHAPE_SIZE : isFullDoc ? '100%' : undefined,
-                height: l.type === 'shape' ? SHAPE_SIZE : isFullDoc ? '100%' : undefined,
+                width: l.type === 'shape' ? SHAPE_SIZE : isFullDoc ? '100%' : isGroup ? 0 : undefined,
+                height: l.type === 'shape' ? SHAPE_SIZE : isFullDoc ? '100%' : isGroup ? 0 : undefined,
+                overflow: isGroup ? 'visible' : undefined,
                 transform: isFullDoc ? undefined : `scale(${transform.scaleX}, ${transform.scaleY}) rotate(${transform.rotation}deg) skew(${transform.skewX || 0}deg, ${transform.skewY || 0}deg)`,
                 transformOrigin: '0 0',
                 opacity: l.opacity,

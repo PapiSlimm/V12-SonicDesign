@@ -2,12 +2,14 @@ import { LayerFactory } from '../core/layers/LayerFactory';
 import { Layer, MotionPath } from '../core/types';
 import { DOC_WIDTH, DOC_HEIGHT } from '../core/layers/layerUtils';
 
-export const PROJECT_FILE_VERSION = 2;
+export const PROJECT_FILE_VERSION = 3; // v3: audio tracks embedded (audioData)
 
 export interface SerializedLayer extends Omit<Layer, 'bitmap'> {
   bitmap: null;
   /** PNG data URL of the raster content (if any). */
   bitmapData?: string;
+  /** Audio bytes as a data URL (audio layers). Embedded so a project file is self-contained. */
+  audioData?: string;
 }
 
 export interface ProjectFile {
@@ -126,33 +128,71 @@ export async function dataUrlToBitmap(dataUrl: string): Promise<ImageBitmap> {
   return fileToBitmap(blob);
 }
 
+/** Synchronous serialisation (bitmaps only). Audio blob: URLs are blanked — use `serializeLayersWithAudio` for files. */
 export function serializeLayers(layers: Layer[]): SerializedLayer[] {
   return layers.map((l) => {
     const { bitmap, calculatedMotionBlur, ...rest } = l as Layer & { calculatedMotionBlur?: unknown };
     const serialized: SerializedLayer = { ...(rest as Omit<Layer, 'bitmap'>), bitmap: null };
     if (bitmap) serialized.bitmapData = bitmapToDataUrl(bitmap);
     if (l.type === 'audio' && l.audioSettings?.src.startsWith('blob:')) {
-      // Blob URLs do not survive reloads; keep the metadata so the track can be re-linked.
       serialized.audioSettings = { ...l.audioSettings, src: '' };
     }
     return serialized;
   });
 }
 
+/* Audio bytes are read once per blob URL and cached, so autosave does not re-read a 10 MB track every 15 s. */
+const audioDataCache = new Map<string, Promise<string>>();
+function blobUrlToDataUrl(url: string): Promise<string> {
+  let p = audioDataCache.get(url);
+  if (!p) {
+    p = fetch(url).then(r => r.blob()).then(blob => new Promise<string>((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result));
+      fr.onerror = () => reject(fr.error);
+      fr.readAsDataURL(blob);
+    }));
+    p.catch(() => audioDataCache.delete(url));
+    audioDataCache.set(url, p);
+  }
+  return p;
+}
+
+/** Serialisation for project files and autosave: embeds audio tracks so the project reopens with sound. */
+export async function serializeLayersWithAudio(layers: Layer[]): Promise<SerializedLayer[]> {
+  const out = serializeLayers(layers);
+  await Promise.all(layers.map(async (l, i) => {
+    const src = l.type === 'audio' ? l.audioSettings?.src : undefined;
+    if (!src || !src.startsWith('blob:')) return;
+    try { out[i].audioData = await blobUrlToDataUrl(src); }
+    catch (e) { console.warn('Could not embed audio for', l.name, e); }
+  }));
+  return out;
+}
+
 export async function deserializeLayers(layers: SerializedLayer[]): Promise<Layer[]> {
   const out: Layer[] = [];
   for (const sl of layers) {
-    const { bitmapData, ...rest } = sl;
+    const { bitmapData, audioData, ...rest } = sl;
     let bitmap: ImageBitmap | null = null;
     if (bitmapData) {
       try { bitmap = await dataUrlToBitmap(bitmapData); } catch (e) { console.warn('Could not restore bitmap for', sl.name, e); }
     }
-    out.push({ ...(rest as Layer), bitmap, adjustments: rest.adjustments || LayerFactory.createDefaultAdjustments(), transform: rest.transform || LayerFactory.createDefaultTransform() });
+    let audioSettings = rest.audioSettings;
+    if (audioData && audioSettings) {
+      try {
+        const blob = await (await fetch(audioData)).blob();
+        const url = URL.createObjectURL(blob);
+        audioSettings = { ...audioSettings, src: url };
+        audioDataCache.set(url, Promise.resolve(audioData)); // re-saving does not re-encode
+      } catch (e) { console.warn('Could not restore audio for', sl.name, e); }
+    }
+    out.push({ ...(rest as Layer), audioSettings, bitmap, adjustments: rest.adjustments || LayerFactory.createDefaultAdjustments(), transform: rest.transform || LayerFactory.createDefaultTransform() });
   }
   return out;
 }
 
-export function buildProjectFile(data: Omit<ProjectFile, 'version' | 'app' | 'savedAt' | 'layers'> & { layers: Layer[] }): ProjectFile {
+export async function buildProjectFile(data: Omit<ProjectFile, 'version' | 'app' | 'savedAt' | 'layers'> & { layers: Layer[] }): Promise<ProjectFile> {
   return {
     version: PROJECT_FILE_VERSION,
     app: 'V12SonicDesign Studio',
@@ -160,7 +200,7 @@ export function buildProjectFile(data: Omit<ProjectFile, 'version' | 'app' | 'sa
     projectName: data.projectName,
     duration: data.duration,
     fps: data.fps,
-    layers: serializeLayers(data.layers),
+    layers: await serializeLayersWithAudio(data.layers),
     motionPaths: data.motionPaths,
     colorSwatches: data.colorSwatches,
     globalColorVariables: data.globalColorVariables,

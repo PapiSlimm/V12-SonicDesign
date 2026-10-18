@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useStore } from '../store/index';
 import { CanvasHandle } from './Canvas';
-import { createZip, canvasToBytes } from '../utils/zip';
+import { canvasToBytes, canvasToBlob, pickZipSink, ZipWriter, ZIP_MAX_BYTES, ZIP_MAX_ENTRIES } from '../utils/zip';
 import { downloadBlob } from '../services/fileService';
 import { DOC_WIDTH, DOC_HEIGHT } from '../core/layers/layerUtils';
 import { analyseAudio, resolveAudioSrc } from '../core/audio';
@@ -98,27 +98,48 @@ export const ExportModal: React.FC<ExportModalProps> = ({ canvasRef }) => {
 
   const yieldToUI = () => new Promise(res => setTimeout(res, 0));
 
+  /** In-memory budget for sequence exports when the browser cannot stream to disk. */
+  const MEMORY_BUDGET_BYTES = 1.5 * 1024 * 1024 * 1024;
+
   const renderSequence = async (ext: 'png' | 'jpg') => {
     const totalFrames = calculatedTotalFrames;
-    const entries: { name: string; data: Uint8Array }[] = [];
+    const filename = `${safeName}_${ext}_sequence_${startSec.toFixed(1)}s-${endSec.toFixed(1)}s.zip`;
+    if (totalFrames > ZIP_MAX_ENTRIES) throw new Error(`${totalFrames} frames exceeds the ZIP limit (${ZIP_MAX_ENTRIES}). Export a shorter range or use MP4.`);
+    // Stream to disk when the browser allows it (Chrome/Edge): zero accumulation. Ask now, while the click is still a user gesture.
+    const sink = await pickZipSink(filename);
+    const zip = new ZipWriter(sink);
     const background = ext === 'jpg' || !transparent ? '#111111' : null;
     const pad = String(totalFrames).length;
-    for (let frame = 0; frame < totalFrames; frame++) {
-      if (cancelRef.current) throw new Error('cancelled');
-      const time = startSec + frame / fps;
-      const canvas = renderFrameAt(time, background);
-      if (!canvas) throw new Error('Canvas unavailable');
-      const bytes = await canvasToBytes(canvas, ext === 'jpg' ? 'image/jpeg' : 'image/png', 0.92);
-      entries.push({ name: `${safeName}_${String(frame).padStart(pad, '0')}.${ext}`, data: bytes });
-      if (frame === 0 || frame % Math.max(1, Math.floor(totalFrames / 6)) === 0) setRenderedPreviewUrl(canvas.toDataURL('image/jpeg', 0.7));
-      setProgress(Math.round(((frame + 1) / totalFrames) * 100));
-      setStatusMessage(`Rendering frame ${frame + 1} of ${totalFrames} (${time.toFixed(2)}s)…`);
+    try {
+      for (let frame = 0; frame < totalFrames; frame++) {
+        if (cancelRef.current) throw new Error('cancelled');
+        const time = startSec + frame / fps;
+        const canvas = renderFrameAt(time, background);
+        if (!canvas) throw new Error('Canvas unavailable');
+        const blob = await canvasToBlob(canvas, ext === 'jpg' ? 'image/jpeg' : 'image/png', 0.92);
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        if (frame === 0) {
+          // Estimate the whole export from the first frame and fail early instead of at frame 3,000.
+          const estimate = bytes.length * totalFrames;
+          const mb = (estimate / (1024 * 1024)).toFixed(0);
+          if (estimate > ZIP_MAX_BYTES) throw new Error(`Estimated ${mb} MB exceeds the 4 GiB ZIP limit. Export a shorter range, lower the scale, or use MP4.`);
+          if (!sink && estimate > MEMORY_BUDGET_BYTES) throw new Error(`Estimated ${mb} MB is too large to build in memory in this browser. Use Chrome/Edge (streams to disk), export a shorter range, lower the scale, or use MP4.`);
+          setStatusMessage(`Rendering ${totalFrames} frames (≈${mb} MB${sink ? ', streaming to disk' : ''})…`);
+        }
+        await zip.add(`${safeName}_${String(frame).padStart(pad, '0')}.${ext}`, bytes, blob); // CRC from bytes, payload kept as Blob
+        if (frame === 0 || frame % Math.max(1, Math.floor(totalFrames / 6)) === 0) setRenderedPreviewUrl(canvas.toDataURL('image/jpeg', 0.7));
+        setProgress(Math.round(((frame + 1) / totalFrames) * 100));
+        setStatusMessage(`Rendering frame ${frame + 1} of ${totalFrames} (${time.toFixed(2)}s) · ${(zip.bytesWritten / (1024 * 1024)).toFixed(0)} MB…`);
+        await yieldToUI();
+      }
+      setStatusMessage(sink ? 'Finalising file…' : 'Packing ZIP archive…');
       await yieldToUI();
+      const blob = await zip.finish();
+      return { blob: blob ?? new Blob([], { type: 'application/zip' }), filename, savedToDisk: !blob, bytes: zip.bytesWritten };
+    } catch (e) {
+      await zip.abort().catch(() => {});
+      throw e;
     }
-    setStatusMessage('Packing ZIP archive…');
-    await yieldToUI();
-    const blob = createZip(entries);
-    return { blob, filename: `${safeName}_${ext}_sequence_${startSec.toFixed(1)}s-${endSec.toFixed(1)}s.zip` };
   };
 
   const renderWebm = async () => {
@@ -209,14 +230,15 @@ export const ExportModal: React.FC<ExportModalProps> = ({ canvasRef }) => {
         setStatusMessage('Analysing audio tracks…');
         await Promise.all(srcs.map(src => analyseAudio(src, 60)));
       }
-      let result: { blob: Blob; filename: string };
+      let result: { blob: Blob; filename: string; savedToDisk?: boolean; bytes?: number };
       if (format === 'png' || format === 'jpg') result = await renderSequence(format);
       else if (format === 'webm') result = await renderWebm();
       else if (format === 'mp4') result = await renderMp4();
       else result = await renderSingle();
-      setResultBlob(result);
+      setResultBlob(result.savedToDisk ? null : result);
       setRenderComplete(true);
-      setStatusMessage(`Done — ${result.filename} (${(result.blob.size / (1024 * 1024)).toFixed(2)} MB). Click Download.`);
+      const mb = ((result.bytes ?? result.blob.size) / (1024 * 1024)).toFixed(2);
+      setStatusMessage(result.savedToDisk ? `Done — ${result.filename} (${mb} MB) saved to disk.` : `Done — ${result.filename} (${mb} MB). Click Download.`);
     } catch (err: any) {
       setStatusMessage(err?.message === 'cancelled' ? 'Render cancelled.' : `Render failed: ${err?.message || err}`);
     } finally {

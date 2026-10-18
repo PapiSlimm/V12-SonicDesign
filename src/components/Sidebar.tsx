@@ -159,7 +159,7 @@ export const Sidebar: React.FC = () => {
   const handleAiAnimate = async () => {
     if (!selectedLayerId || !aiPrompt.trim() || !currentLayer) return;
     if (!isAIConfigured()) {
-      setStatusMessage('AI is not configured — add VITE_GEMINI_API_KEY to .env.local and restart the dev server');
+      setStatusMessage('AI is not configured — set VITE_MEDIA_URL (production) or VITE_GEMINI_API_KEY in .env.local (local dev)');
       return;
     }
     setIsGenerating(true);

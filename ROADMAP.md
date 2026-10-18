@@ -8,7 +8,7 @@ Rule: every item below is shipped by the daily build agent, verified (tsc + buil
 - [ ] P1-02 Cloud projects: save/open/list projects in Supabase (Postgres + Storage for bitmaps), replaces local-only save
 - [ ] P1-03 Plans + Stripe Checkout: Free / Pro $39 / Studio $99, customer portal, webhook → `plan` on user
 - [ ] P1-04 Entitlements: Free = watermark on export, 720p, 3 projects; Pro = no watermark, 4K, unlimited; Studio = team seats
-- [ ] P1-05 Server-side AI proxy (Render web service) so the Gemini key is never in the browser; AI credits metered per plan
+- [x] P1-05 Server-side AI proxy — shipped 2026-10-18 as the media service `/ai` route (Gemini key server-side, model allow-list, rate-limited); AI credits metered per plan still pending P1-03/P1-04
 - [ ] P1-06 Landing page + pricing page + onboarding (first-run tour, sample project), SEO meta, OG image
 - [ ] P1-07 Analytics + error tracking (PostHog + Sentry) so growth is measurable
 - [ ] P1-08 Legal: Terms, Privacy, refund policy pages; cookie banner

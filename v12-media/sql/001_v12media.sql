@@ -45,10 +45,12 @@ CREATE TABLE IF NOT EXISTS v12media.jobs (
   started_at   timestamptz,
   finished_at  timestamptz,
   progress     real NOT NULL DEFAULT 0,
+  lease        int NOT NULL DEFAULT 0,               -- bumped on every claim / re-queue; writers must present the lease they hold
   error        text,
   result       jsonb,
   created_at   timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE v12media.jobs ADD COLUMN IF NOT EXISTS lease int NOT NULL DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS jobs_dedup ON v12media.jobs (dedup_key) WHERE dedup_key IS NOT NULL AND status IN ('queued','running','done');
 CREATE INDEX IF NOT EXISTS jobs_claim ON v12media.jobs (priority, created_at) WHERE status = 'queued';
 CREATE INDEX IF NOT EXISTS jobs_running ON v12media.jobs (heartbeat_at) WHERE status = 'running';

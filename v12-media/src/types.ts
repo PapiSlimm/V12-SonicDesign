@@ -49,6 +49,8 @@ export interface Job<P = JobParams> {
   started_at: string | null;
   finished_at: string | null;
   progress: number;
+  /** fencing token: every write by a worker is conditioned on the lease it was given at claim time */
+  lease: number;
   error: string | null;
   result: JobResult | null;
   created_at: string;

@@ -32,6 +32,9 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+// Test hook: the end-to-end suite (tests/e2e) reads and drives the store through this handle.
+if (typeof window !== 'undefined') (window as unknown as { __v12: typeof useStore }).__v12 = useStore;
+
 export default function App() {
   // Subscribe to individual slices so 60fps time updates don't re-render the whole tree
   const layers = useStore(s => s.layers);
@@ -228,9 +231,9 @@ export default function App() {
     else setStatusMessage('No supported images were selected');
   }, [addLayer, setStatusMessage]);
 
-  const handleSaveProject = useCallback(() => {
+  const handleSaveProject = useCallback(async () => {
     const s = useStore.getState();
-    const project = buildProjectFile({
+    const project = await buildProjectFile({
       projectName: s.projectName,
       duration: s.duration,
       fps: s.fps,
@@ -286,8 +289,8 @@ export default function App() {
   const runAI = useCallback(async (label: string, job: (composite: string, signal: AbortSignal) => Promise<string>) => {
     if (!canvasRef.current) return;
     if (!isAIConfigured()) {
-      setStatusMessage('AI is not configured — add VITE_GEMINI_API_KEY to .env.local and restart the dev server');
-      window.alert('Gemini API key missing.\n\nCreate a .env.local file next to package.json containing:\nVITE_GEMINI_API_KEY=your_key_here\n\nthen restart `npm run dev`.');
+      setStatusMessage('AI is not configured — set VITE_MEDIA_URL (production) or VITE_GEMINI_API_KEY in .env.local (local dev)');
+      window.alert('AI is not configured.\n\nProduction: set VITE_MEDIA_URL to the V12 media service (the Gemini key stays on the server).\nLocal dev: add VITE_GEMINI_API_KEY=your_key to .env.local and restart `npm run dev`.');
       return;
     }
     aiAbortController.current?.abort();

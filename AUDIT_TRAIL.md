@@ -184,3 +184,29 @@ Shipped (verified: package `tsc` 0 errors; 5/5 end-to-end tests against a real P
 - Docs: `v12-media/README.md` (deploy, per-app integration, browser API, tests, promote-to-own-repo), `docs/PIPELINE.md` updated, `ROADMAP.md` P2-03 amended.
 
 Deployment steps that only Papi can do: set `DATABASE_URL` on the `v12-media` service in Render (shared V12 Postgres internal URL); optionally the R2 `MEDIA_S3_*` keys so renditions go to the bucket instead of the Render disk.
+
+
+---
+
+## Update 2026-10-18 — Second-opinion OODA audit: 12 findings, all addressed
+
+Source: external OODA audit of `088d654`. Verdict: 11/12 confirmed (the "package not buildable" observation was a missing `npm install`; the real gap underneath — tests not checked in — is fixed). Every finding below links to the fix and the test that proves it.
+
+| # | Finding | Fix | Proof |
+|---|---|---|---|
+| P0-1 | Media ingress public, cross-tenant | Fail-closed auth: HMAC grants (`mintGrant/verifyGrant`) or static token; per-IP rate limits; per-owner/app daily byte quotas; job-param allow-list; multipart part caps; queued job cancelled on client disconnect; CORS origin list | media e2e: anonymous → 401, forged/expired grant → 401, cross-tenant read/enqueue → 404 |
+| P0-2 | Local storage path traversal via `app` | `safeKey/safeJoin/safeApp` in `storage.ts`; keys server-generated; `file://` only for server-side callers | media e2e: 9 traversal payloads rejected |
+| P0-3 | Stale job double-commit | `jobs.lease` fencing token; every worker write conditioned on `claimed_by+lease`; result commit takes `FOR UPDATE` and re-checks inside the transaction | media e2e: zombie worker's commit affects 0 rows |
+| P1-4 | Sequence export memory / no ZIP64 | Streaming `ZipWriter` (File System Access sink on Chrome/Edge = zero accumulation; otherwise frames kept as Blobs, off-heap); first-frame size estimate fails early; ZIP32 limits enforced (65k entries / 4 GiB) with actionable messages | app e2e: 1 s PNG sequence → valid ZIP, central dir == local headers |
+| P1-5 | Group transform preview ≠ export | `Canvas.tsx` groups now translate/scale/rotate/skew about origin 0 0 exactly like `RenderEngine.drawLayerRecursive` | app e2e: group at (250,120) scale 1.5 rot 30 → DOM transform matches |
+| P1-6 | Visualizer smoothing preview ≠ export | Smoothing made frame-rate independent (`k^(dt·60)`), self-resetting on backwards/jumps; export no longer resets per frame | covered by audio e2e export; math in `AudioReactiveRenderer.render` |
+| P1-7 | `pagehide` marked dirty sessions clean | `markCleanExit()` only when `!dirty` | app e2e: dirty pagehide leaves no `cleanExit` |
+| P1-8 | Gemini key shipped to browsers | `/ai` proxy on the media service (server-side `GEMINI_API_KEY`, model allow-list, auth + rate limit); `aiService` uses `httpOptions.baseUrl` when `VITE_MEDIA_URL` is set; `render.yaml` no longer passes a key to the static site; Vite `define` blanks the key in production builds | media e2e: 503 without key, 400 off-list model/action, key never echoed; `dist/` contains no key |
+| P1-9 | Worker lifecycle | Stale-requeue interval retained and cleared on stop; reconnect timers honour `stopped`; claim loop survives exceptions; graceful stop drains in-flight jobs | media e2e start/stop cycles |
+| P2-10 | Audio not in saved projects | Project file v3 embeds audio as `audioData` (cached per blob URL so autosave doesn't re-read); restored to a blob URL on load; autosave uses the same path | audio e2e: Ctrl+S file has `audioData` ≥100 KB, version 3 |
+| P2-11 | `MediaClient` not tenant-scoped | All reads scoped to `app` (+ optional `ownerId`); `enqueue` verifies asset ownership; worker refuses cross-app dependencies | media e2e: other app → null / rejects |
+| P2-12 | Worker fetches arbitrary URLs | Host allow-list (+ private-range block), 10-min timeout, 2 GB cap, `redirect: 'error'` | media e2e: allow-list cases incl. 169.254.169.254 |
+
+Tests are now in the repo: `tests/e2e/` (Playwright, `npm test`, 30 checks) and `v12-media/src/test/e2e.test.ts` (`npm run test:media`, 10 tests). Store handle `window.__v12` exposed for the suite.
+
+Known follow-ups (not blockers): group children are hit-tested in document space in the preview (selection boxes may offset when a group is transformed — compositing is correct); the static token for SonicDesign is public by nature until the studio gets accounts (P1 cloud projects), so abuse is bounded by quotas, not identity; `ALLOWED_ORIGIN` should be locked to the final studio domain.

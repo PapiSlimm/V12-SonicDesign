@@ -32,7 +32,8 @@ function drawAudioReactive(ctx: CanvasRenderingContext2D, layer: Layer, opts: Co
   const time = opts.time ?? 0;
   if (analysis) AudioReactiveRenderer.sample(analysis, time, exportSignal);
   else { exportSignal.bands.fill(0.3); exportSignal.spectrum.fill(0.3); exportSignal.rms = 0.3; exportSignal.beat = 0; }
-  renderer.resetSmoothing(); // one-shot frames must not depend on previous export frames
+  // Smoothing is time-based inside the renderer (it resets itself on backwards jumps), so sequential export
+  // frames smooth exactly like playback and a single-frame export resets automatically.
   renderer.render(exportSignal, settings, time);
   ctx.drawImage(renderer.canvas, -DOC_WIDTH / 2, -DOC_HEIGHT / 2);
 }

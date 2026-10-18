@@ -35,11 +35,53 @@ const MIME: Record<string, string> = {
 };
 export const mimeFor = (file: string) => MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
 
+/** Object keys are server-generated, but every piece that came from a request is validated here anyway. */
+const KEY_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+export function safeKey(key: string): string {
+  if (typeof key !== 'string' || !key || key.length > 512) throw new Error('invalid storage key');
+  const parts = key.split('/');
+  for (const p of parts) {
+    if (!KEY_SEGMENT.test(p) || p === '.' || p === '..') throw new Error(`invalid storage key segment: ${JSON.stringify(p)}`);
+  }
+  return parts.join('/');
+}
+/** Resolve `key` under `root`, refusing anything that escapes it. */
+export function safeJoin(root: string, key: string): string {
+  const base = path.resolve(root);
+  const full = path.resolve(base, safeKey(key));
+  if (full !== base && !full.startsWith(base + path.sep)) throw new Error('storage key escapes root');
+  return full;
+}
+/** App identifiers come from requests: lower-case slug only. */
+export function safeApp(app: unknown): string {
+  const s = String(app ?? '').toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]{1,39}$/.test(s)) throw new Error('invalid app id');
+  return s;
+}
+
+const FETCH_TIMEOUT_MS = parseInt(process.env.MEDIA_FETCH_TIMEOUT_MS || String(10 * 60 * 1000), 10);
+const MAX_FETCH_BYTES = parseInt(process.env.MEDIA_MAX_FETCH_MB || '2048', 10) * 1024 * 1024;
+
+/** Remote http(s) sources are only fetched from allow-listed hosts (MEDIA_FETCH_ALLOWLIST, comma-separated, plus the public base URL host). */
+export function hostAllowed(url: string, env = process.env): boolean {
+  let host: string;
+  try { const u = new URL(url); if (u.protocol !== 'https:' && u.protocol !== 'http:') return false; host = u.hostname.toLowerCase(); } catch { return false; }
+  if (/^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.|\[?::1)/.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) return false;
+  const allow = new Set((env.MEDIA_FETCH_ALLOWLIST || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
+  for (const k of ['MEDIA_PUBLIC_BASE_URL', 'MEDIA_S3_ENDPOINT', 'RENDER_EXTERNAL_URL']) { try { if (env[k]) allow.add(new URL(env[k]!).hostname.toLowerCase()); } catch { /* ignore */ } }
+  return [...allow].some(a => host === a || (a.startsWith('*.') && host.endsWith(a.slice(1))));
+}
+
 async function downloadHttp(url: string, localPath: string) {
-  const res = await fetch(url);
+  if (!hostAllowed(url)) throw new Error(`source host not allow-listed: ${url}`);
+  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), redirect: 'error' });
   if (!res.ok || !res.body) throw new Error(`fetch ${url} → ${res.status}`);
+  const len = Number(res.headers.get('content-length') || 0);
+  if (len > MAX_FETCH_BYTES) throw new Error(`source too large (${len} bytes)`);
   await mkdir(path.dirname(localPath), { recursive: true });
-  await pipeline(Readable.fromWeb(res.body as never), createWriteStream(localPath));
+  let seen = 0;
+  const guard = new (await import('node:stream')).Transform({ transform(chunk, _e, cb) { seen += chunk.length; cb(seen > MAX_FETCH_BYTES ? new Error('source too large') : null, chunk); } });
+  await pipeline(Readable.fromWeb(res.body as never), guard, createWriteStream(localPath));
 }
 
 export class LocalStorage implements Storage {
@@ -48,7 +90,7 @@ export class LocalStorage implements Storage {
   publicUrl(key: string) { return `${this.baseUrl.replace(/\/$/, '')}/media/${key}`; }
   sourceUrl(key: string) { return `local://${key}`; }
   async putFile(localPath: string, key: string) {
-    const dest = path.join(this.root, key);
+    const dest = safeJoin(this.root, key);
     await mkdir(path.dirname(dest), { recursive: true });
     await copyFile(localPath, dest);
     return { key, url: this.publicUrl(key), bytes: (await stat(dest)).size };
@@ -60,7 +102,10 @@ export class LocalStorage implements Storage {
   }
   async fetchTo(sourceUrl: string, localPath: string) {
     if (/^https?:/.test(sourceUrl)) return downloadHttp(sourceUrl, localPath);
-    const src = sourceUrl.startsWith('file://') ? decodeURI(sourceUrl.slice(7)) : sourceUrl.startsWith('local://') ? path.join(this.root, sourceUrl.slice(8)) : sourceUrl;
+    let src: string;
+    if (sourceUrl.startsWith('local://')) src = safeJoin(this.root, sourceUrl.slice(8));
+    else if (sourceUrl.startsWith('file://')) src = decodeURI(sourceUrl.slice(7)); // only ever written by server-side apps / tests, never by the ingress
+    else throw new Error(`unsupported source url: ${sourceUrl}`);
     await mkdir(path.dirname(localPath), { recursive: true });
     await copyFile(src, localPath);
   }
@@ -81,6 +126,7 @@ export class S3Storage implements Storage {
   publicUrl(key: string) { return `${this.cfg.baseUrl.replace(/\/$/, '')}/${key}`; }
   sourceUrl(key: string) { return `s3://${this.cfg.bucket}/${key}`; }
   async putFile(localPath: string, key: string, contentType = mimeFor(localPath)) {
+    key = safeKey(key);
     const { Upload } = await import('@aws-sdk/lib-storage');
     const bytes = (await stat(localPath)).size;
     await new Upload({ client: await this.s3(), params: { Bucket: this.cfg.bucket, Key: key, Body: createReadStream(localPath), ContentType: contentType,
@@ -101,7 +147,7 @@ export class S3Storage implements Storage {
     const m = /^s3:\/\/([^/]+)\/(.+)$/.exec(sourceUrl);
     if (!m) throw new Error(`unsupported source url: ${sourceUrl}`);
     const { GetObjectCommand } = await import('@aws-sdk/client-s3');
-    const res = await (await this.s3()).send(new GetObjectCommand({ Bucket: m[1], Key: m[2] }));
+    const res = await (await this.s3()).send(new GetObjectCommand({ Bucket: m[1], Key: safeKey(m[2]) }), { abortSignal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     await mkdir(path.dirname(localPath), { recursive: true });
     await pipeline(res.Body as Readable, createWriteStream(localPath));
   }
