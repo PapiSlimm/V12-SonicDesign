@@ -53,16 +53,16 @@ services:
         value: "2"
       - key: MAX_UPLOAD_MB
         value: "500"
-      - key: ALLOWED_ORIGIN       # lock to the studio's origin once its final domain is known
-        value: "*"
+      - key: ALLOWED_ORIGIN       # browsers allowed to call the ingress (comma-separated); add the custom domain when it exists
+        value: "https://v12-sonicdesign-studio.onrender.com"
       - key: MEDIA_INGRESS_TOKEN   # static bearer for backend-less apps (generated); server apps use MEDIA_INGRESS_SECRET grants
         generateValue: true
       - key: MEDIA_INGRESS_SECRET  # HMAC secret shared with SonicWave/SonicStream/GameWorld servers to mint user grants
         generateValue: true
       - key: GEMINI_API_KEY        # server-side only — the /ai proxy uses it
         sync: false
-      - key: MEDIA_FETCH_ALLOWLIST # extra hosts the worker may download sources from (comma-separated)
-        value: ""
+      - key: MEDIA_FETCH_ALLOWLIST # hosts the worker may download masters from: R2 public buckets (SonicStream/SonicWave hand masters over as R2 URLs)
+        value: "*.r2.dev"
       - key: MEDIA_LOCAL_DIR       # used until MEDIA_S3_* (R2 / GCS) is set; then outputs go to the bucket
         value: /data/media
       - key: MEDIA_S3_ENDPOINT
